@@ -1,4 +1,5 @@
 // 粉丝采集：只读自己账号的粉丝数，每天一次。平台后台自带趋势的（B站 90 天、小红书 30 天、视频号 7 天、知识站 30 天）顺手补历史。
+import { tsImport } from 'tsx/esm/api';
 import { evaluate, withTab, sleep } from './driver.mjs';
 import { num } from './metrics.mjs';
 import { db } from './db.mjs';
@@ -6,6 +7,8 @@ import { config } from './feishu.mjs';
 import { SITE } from './site.mjs';
 
 db.exec(`CREATE TABLE IF NOT EXISTS followers (day TEXT, platform TEXT, total INTEGER, gain INTEGER, loss INTEGER, source TEXT, collected_at TEXT, PRIMARY KEY (day, platform));`);
+const { isPlatformEnabled } = await tsImport('./platforms.ts', import.meta.url);
+
 const dayOf = (d) => { const x = new Date(d); return `${x.getFullYear()}-${String(x.getMonth() + 1).padStart(2, '0')}-${String(x.getDate()).padStart(2, '0')}`; };
 export const today = () => dayOf(Date.now());
 const get = (u) => `fetch(${JSON.stringify(u)},{credentials:'include'}).then(r=>r.json())`;
@@ -78,7 +81,7 @@ export function saveFollowers(platform, r) {
 export async function collectFollowers(only, skip = []) {
   const out = {};
   for (const [p, fn] of Object.entries(followerCollectors)) {
-    if ((only && !only.includes(p)) || skip.includes(p)) continue;
+    if (!isPlatformEnabled(p) || (only && !only.includes(p)) || skip.includes(p)) continue;
     try { const r = await fn(); if (!r) { out[p] = '没读到'; continue; } const n = saveFollowers(p, r); out[p] = { total: r.total, backfilled: n }; }
     catch (e) { out[p] = '出错：' + e.message.slice(0, 80); }
   }

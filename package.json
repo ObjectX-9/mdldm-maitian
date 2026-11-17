@@ -4,7 +4,51 @@
   "description": "麦田：自媒体多平台发布中控与数据监控（B站/抖音/小红书/视频号/YouTube/X）",
   "type": "module",
   "license": "MIT",
-  "engines": { "node": ">=22.5" },
-  "bin": { "maitian": "src/hub.mjs" },
-  "repository": { "type": "git", "url": "https://github.com/CzzzzzzJ/mdldm-maitian.git" }
+  "engines": {
+    "node": ">=22.5"
+  },
+  "bin": {
+    "maitian": "src/hub.mjs"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/CzzzzzzJ/mdldm-maitian.git"
+  },
+  "packageManager": "pnpm@10.11.0",
+  "scripts": {
+    "dev": "MAITIAN_WEB_DEV=1 node src/hub.mjs web",
+    "build": "vite build",
+    "start": "node src/hub.mjs web",
+    "typecheck": "tsc --noEmit && tsc -p tsconfig.server.json",
+    "lint": "eslint frontend/src src vite.config.ts eslint.config.mjs",
+    "prepare": "husky"
+  },
+  "dependencies": {
+    "@radix-ui/react-slot": "^1.2.0",
+    "axios": "^1.8.4",
+    "class-variance-authority": "^0.7.1",
+    "clsx": "^2.1.1",
+    "express": "^5.3.0",
+    "react": "^19.1.0",
+    "react-dom": "^19.1.0",
+    "tailwind-merge": "^3.2.0",
+    "tsx": "^4.23.15"
+  },
+  "devDependencies": {
+    "@eslint/js": "^9.39.5",
+    "@tailwindcss/vite": "^4.1.0",
+    "@types/express": "^5.0.6",
+    "@types/node": "^22.15.0",
+    "@types/react": "^19.1.0",
+    "@types/react-dom": "^19.1.0",
+    "@vitejs/plugin-react": "^5.0.0",
+    "eslint": "^9.39.5",
+    "eslint-plugin-react-hooks": "^5.2.0",
+    "globals": "^16.5.0",
+    "husky": "^9.1.7",
+    "tailwindcss": "^4.1.0",
+    "typescript": "^5.8.3",
+    "typescript-eslint": "^8.72.2",
+    "vite": "^7.0.0"
+  }
 }

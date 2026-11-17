@@ -2,6 +2,7 @@
 //   node src/demo.mjs            生成 demo/ 目录（假配置、假数据库、假工程和封面），在 http://localhost:8788/?key=demo 打开
 //   node src/demo.mjs --reset    重新生成假数据
 // 演示数据只在 demo/ 里，不碰你的 data/hub.db 和 config.json。
+import { tsImport } from 'tsx/esm/api';
 import fs from 'node:fs'; import path from 'node:path'; import { fileURLToPath } from 'node:url';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
@@ -69,6 +70,6 @@ if (fresh) {
   setMeta('siteCampaigns', 'on'); setMeta('metricsDay', new Date().toLocaleDateString('zh-CN')); setMeta('doctorDay', new Date().toLocaleDateString('zh-CN'));
   console.log('演示数据已生成：demo/');
 }
-const { startWeb } = await import('./web.mjs');
+const { startWeb } = await tsImport('./web.ts', import.meta.url);
 startWeb();
 console.log('打开 http://localhost:8788/?key=demo （Ctrl+C 退出）');

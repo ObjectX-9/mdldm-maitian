@@ -1,9 +1,12 @@
 // 飞书多维表格看板：期数、平台发布、每日流量、知识站每日、渠道转化。中控单向写入，按 key 更新不重复。
+import { tsImport } from 'tsx/esm/api';
 import fs from 'node:fs'; import path from 'node:path'; import { execFile } from 'node:child_process'; import { fileURLToPath } from 'node:url';
 import { db, NAMES, STATE_CN, episodes, getTasks, setMeta } from './db.mjs';
 import { config } from './feishu.mjs';
 import { evaluate, withTab } from './driver.mjs';
 import { SITE } from './site.mjs';
+
+const { isPlatformEnabled } = await tsImport('./platforms.ts', import.meta.url);
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const B = config.board;
@@ -46,7 +49,7 @@ const campaign = (dir) => { try { const pj = JSON.parse(fs.readFileSync(path.joi
 
 // 知识站后台的汇总数据（只读）：每日注册/会员/订单/收入，按渠道的注册和转化
 export async function fetchSite() {
-  if (!SITE) throw new Error('没配置自有站点（config.site）');
+  if (!SITE || !isPlatformEnabled('zsz')) throw new Error('没配置自有站点（config.site）');
   const d = await withTab(SITE.admin, (t) => evaluate(t, `fetch(${JSON.stringify(SITE.dashboardApi)},{credentials:'include'}).then(r=>r.ok?r.json():null).then(x=>x&&({reg:x.registrationTrend,rev:x.revenueTrend,ch:x.channelStats,camp:x.campaignStats||null}))`), { wait: 8000 });
   if (!d) throw new Error('知识站后台数据没读到（管理员登录过期？）');
   const days = {};
@@ -89,7 +92,7 @@ export async function boardSync({ site = true } = {}) {
     return { key: `${m.day}|${m.episode_id}|${m.platform}`, fields: { 记录: `${m.day} · ${e.episode || ''} 期 · ${NAMES[m.platform]}`, 日期: `${m.day} 00:00`, 期号: e.episode || null, 标题: short(e.name), 平台: [NAMES[m.platform]], 播放: m.views, 播放增量: p && m.views != null && p.views != null ? m.views - p.views : null, 点赞: m.likes, 评论: m.comments, 收藏: m.favorites, 转发: m.shares } };
   }));
 
-  if (site) {
+  if (isPlatformEnabled('zsz') && site) {
     try {
       const s = await fetchSite();
       out.知识站每日 = await upsert('site', Object.entries(s.days).map(([day, v]) => ({ key: day, fields: { 日期文本: day, 日期: `${day} 00:00`, 新注册: v.reg, 新增会员: v.vip, 订单数: v.orders || 0, 收入: v.revenue || 0, 当天发布: (pubDays[day] || []).join('；') } })));

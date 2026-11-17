@@ -10,6 +10,7 @@
 //   hub adopt <工程目录>                         登记一期已发过的（不上传）
 //   hub metrics [id]                            采集流量并发日报
 //   hub daemon                                  常驻：到点自动取链接、提醒还没点发布的平台
+import { tsImport } from 'tsx/esm/api';
 import fs from 'node:fs'; import path from 'node:path'; import os from 'node:os'; import crypto from 'node:crypto'; import { execFileSync, spawn } from 'node:child_process';
 import { db, NAMES, LOCKED, STATE_CN, upsertEpisode, getTask, getTasks, setTask, log, episodes, getEpisode, recentLogs, getMeta, setMeta, saveMetric, prevMetric, saveSnapshot } from './db.mjs';
 import { collectors } from './metrics.mjs';
@@ -28,7 +29,11 @@ const strip = (s) => String(s || '').replace(/ *\d+%/, '');
 const mapState = (s) => s === '待你发布' || s === '已填写' ? 'filled' : s === '异常' || s === '上传超时' ? 'failed' : s === '未登录' ? 'not_logged_in' : s === '已停止' ? 'stopped' : s === '跳过' ? 'skipped' : 'running';
 const loadProject = (dir) => JSON.parse(fs.readFileSync(path.join(dir, 'publish.json'), 'utf8'));
 const projectOf = (ep, pj) => ({ dir: path.relative(config.rootPath, ep.dir), data: pj });
-const ALL = ['bilibili', 'xhs', 'douyin', 'channels', 'youtube', 'x', 'instagram', 'zsz'].filter(id => id !== 'zsz' || SITE);   // 没配自有站点就不管 zsz
+const { enabledPlatforms, isPlatformEnabled } = await tsImport('./platforms.ts', import.meta.url);
+const { collectComments, commentsNextAt } = await tsImport('./comments.ts', import.meta.url);
+const { beginDaemon, daemonPhase } = await tsImport('./runtime.ts', import.meta.url);
+const { acquireBrowser, releaseBrowser } = await tsImport('./browser-lock.ts', import.meta.url);
+const ALL = enabledPlatforms;   // 没配自有站点就不管 zsz
 const LOGIN_PAGES = { bilibili: 'https://member.bilibili.com/platform/upload/video/frame', xhs: 'https://creator.xiaohongshu.com/publish/publish?source=official&target=video', douyin: 'https://creator.douyin.com/creator-micro/content/upload', channels: 'https://channels.weixin.qq.com/platform/post/create', youtube: 'https://studio.youtube.com/', x: 'https://x.com/home', instagram: 'https://www.instagram.com/', zsz: SITE ? SITE.admin : '' };
 
 function table(eid) {
@@ -36,6 +41,8 @@ function table(eid) {
 }
 
 async function runBatch(ep, pj, batch) {
+  batch = batch.filter(isPlatformEnabled);
+  if (!batch.length) return {};
   log(ep.id, batch.join(','), 'start-batch', drv.mode);
   const last = {};
   const onState = (s) => {
@@ -53,6 +60,7 @@ async function runBatch(ep, pj, batch) {
 
 // 批次跑完后：自动平台回读核对并提交，手动平台交给你自己点
 async function after(ep, pj, id, res) {
+  if (!isPlatformEnabled(id)) return;
   const p = pj.platforms[id];
   if (res.state !== 'filled') return;
   // 存档：提交前把填好的页面截一张图
@@ -87,6 +95,7 @@ const refuse = (m) => Object.assign(new Error(m), { quiet: true });   // 拒绝�
 async function submitOne() {
   const ep = getEpisode(args[1]), id = args[2];
   if (!ep) throw refuse('没有这一期，先 hub status 看 id');
+  if (!isPlatformEnabled(id)) throw refuse('该平台未开启');
   if (!SUBMIT_PAGES[id]) throw refuse(`hub submit 只支持 ${Object.keys(SUBMIT_PAGES).join(' / ')}；国内平台由你自己点发布`);
   const pj = loadProject(ep.dir), p = pj.platforms[id];
   if (!p || p.skip) throw refuse(`publish.json 里没有 ${id}，或已设 skip`);
@@ -108,6 +117,7 @@ async function submitOne() {
 }
 
 async function run() {
+  if (!enabledPlatforms().length) throw refuse('未开启任何平台');
   const dir = path.resolve(args[1] || '');
   if (!fs.existsSync(path.join(dir, 'publish.json'))) throw new Error(`${dir} 里没有 publish.json`);
   try { execFileSync('node', [path.join(config.pluginDir, 'tools/validate.mjs'), dir], { stdio: 'pipe' }); }
@@ -115,7 +125,7 @@ async function run() {
   const pj = loadProject(dir), ep = { id: pj.id, episode: pj.episode, name: pj.name, dir, schedule: pj.schedule || null };
   upsertEpisode(ep); saveSnapshot(ep.id, pj, true);
   const only = opt('--only') ? opt('--only').split(',') : null, force = args.includes('--force');
-  let todo = Object.keys(pj.platforms).filter(id => !pj.platforms[id].skip && (!only || only.includes(id)));
+  let todo = Object.keys(pj.platforms).filter(id => isPlatformEnabled(id) && !pj.platforms[id].skip && (!only || only.includes(id)));
   // X 长文模式（长文 + 视频帖引用长文）：不走插件填写，定时前 25 分钟由守护进程调长文脚本
   if (todo.includes('x') && pj.platforms.x.mode === 'article+quote') {
     todo = todo.filter(i => i !== 'x');
@@ -194,8 +204,10 @@ async function run() {
 
 // 取链接、更新状态；写 NAS 的 发布记录.json，回填发布素材 md 头部的「已发布」行
 async function sync(ep, ids, quiet = false) {
-  const pj = loadProject(ep.dir); await drv.ensure();
-  ids = (ids || Object.keys(pj.platforms)).filter(i => pj.platforms[i] && !pj.platforms[i].skip);
+  const pj = loadProject(ep.dir);
+  ids = (ids || Object.keys(pj.platforms)).filter(i => isPlatformEnabled(i) && pj.platforms[i] && !pj.platforms[i].skip);
+  if (!ids.length) return false;
+  await drv.ensure();
   const before = table(ep.id);
   const r = await drv.links(projectOf(ep, pj), ids);
   for (const [id, v] of Object.entries(r)) {
@@ -232,11 +244,12 @@ async function sync(ep, ids, quiet = false) {
 const today = () => new Date(Date.now() + 8 * 3600e3).toISOString().slice(0, 10);
 let SKIP_METRICS = [];   // hub metrics --skip xhs：这次不采的平台
 async function collectMetrics(ep) {
-  const pj = loadProject(ep.dir), day = today(), lines = []; let total = 0, totalDelta = 0, any = false;
+  const pj = loadProject(ep.dir), day = today(), lines = [];
+  if (!enabledPlatforms().length) return null; let total = 0, totalDelta = 0, any = false;
   await drv.ensure();
   for (const t of getTasks(ep.id)) {
     const fn = collectors[t.platform], p = pj.platforms[t.platform];
-    if (!fn || !p || t.state !== 'published' || SKIP_METRICS.includes(t.platform)) continue;
+    if (!isPlatformEnabled(t.platform) || !fn || !p || t.state !== 'published' || SKIP_METRICS.includes(t.platform)) continue;
     let m = null; try { m = await fn({ url: t.url, p, detail: t.detail }); } catch (e) { log(ep.id, t.platform, 'metrics-error', e.message); }
     if (!m) { lines.push(`${NAMES[t.platform]}：没读到`); continue; }
     saveMetric(day, ep.id, t.platform, m); any = true;
@@ -260,11 +273,29 @@ async function metricsReport(list) {
   else console.log('没有已发布的平台可采集');
 }
 
-async function doctor() {
-  await drv.ensure();
-  const r = await drv.checkLogin(ALL);
-  const lines = ALL.map(id => `${NAMES[id]}：${r[id] && r[id].ok ? '✅ 已登录，上传页正常' : `❌ ${r[id] ? r[id].reason : '没有结果'}`}`);
-  const bad = ALL.filter(id => !(r[id] && r[id].ok));
+function loginPlatforms() {
+  const ids = opt('--only') ? opt('--only').split(',') : ALL();
+  if (ids.some(id => !ALL().includes(id))) throw new Error('不支持的平台');
+  return [...new Set(ids)];
+}
+function saveLogin(id, status, reason = '') {
+  setMeta(`login:${id}`, status);
+  setMeta(`loginCheckedAt:${id}`, new Date().toISOString());
+  setMeta(`loginReason:${id}`, reason);
+}
+async function doctor(ids = ALL()) {
+  ids = ids.filter(isPlatformEnabled);
+  if (!ids.length) { console.log('未开启任何平台'); return []; }
+  let r;
+  try { await drv.ensure(); r = await drv.checkLogin(ids); }
+  catch (e) { for (const id of ids) saveLogin(id, 'error', e.message); throw e; }
+  for (const id of ids) {
+    const result = r[id], reason = result ? result.reason || '' : '没有检测结果';
+    saveLogin(id, result && result.ok ? 'ok' : /没有登录|未登录|跳到了登录页|页面显示扫码登录/.test(reason) ? 'out' : 'error', reason);
+  }
+  if (ALL().every(id => ids.includes(id))) setMeta('doctorDay', new Date().toLocaleDateString('zh-CN'));
+  const lines = ids.map(id => `${NAMES[id]}：${r[id] && r[id].ok ? '✅ 已登录，上传页正常' : `❌ ${r[id] ? r[id].reason : '没有结果'}`}`);
+  const bad = ids.filter(id => !(r[id] && r[id].ok));
   console.log(lines.join('\n'));
   if (args.includes('--notify') || bad.length) await notify(`🩺 发布中控体检（${drv.mode === 'plugin' ? '插件方式' : '专用 Chrome'}）\n${lines.join('\n')}`);
   return bad;
@@ -305,7 +336,7 @@ function planDir(dir) {
   const pj = loadProject(dir);
   if (getEpisode(pj.id)) return null;
   upsertEpisode({ id: pj.id, episode: pj.episode, name: pj.name, dir, schedule: pj.schedule || null }); saveSnapshot(pj.id, pj);
-  for (const id of Object.keys(pj.platforms)) setTask(pj.id, id, pj.platforms[id].skip ? 'skipped' : 'planned', pj.platforms[id].skip ? String(pj.platforms[id].skip).slice(0, 80) : '');
+  for (const id of Object.keys(pj.platforms).filter(isPlatformEnabled)) setTask(pj.id, id, pj.platforms[id].skip ? 'skipped' : 'planned', pj.platforms[id].skip ? String(pj.platforms[id].skip).slice(0, 80) : '');
   log(pj.id, '', 'plan', dir); return pj.name;
 }
 // 扫 rootPath 下三层以内的 publish.json：定时在未来、还没登记的，自动进计划
@@ -323,19 +354,23 @@ function scanPlans() {
 
 // 常驻：每 5 分钟看一眼。到了定时时间自动取链接；你还没点的平台定时提醒并检查
 async function daemon() {
-  if (!process.env.HUB_NO_WEB && config.web) { const { startWeb } = await import('./web.mjs'); startWeb(); }
+  beginDaemon();
+  if (!process.env.HUB_NO_WEB && config.web) { const { startWeb } = await tsImport('./web.ts', import.meta.url); startWeb(); }
   console.log(`发布中控守护进程启动（${drv.mode}）`);
   // 开机后 NAS 往往比守护进程晚挂上：等一等，自己挂一次（密码在钥匙串里），5 分钟还不行再报警
   { let ok = false; for (let i = 0; i < 10 && !(ok = await ensureNas()); i++) await drv.sleep(30000);
     if (ok) console.log('NAS 可读'); else await notify('⚠️ 麦田守护进程启动 5 分钟后仍读不到 NAS（已尝试自动挂载），取链接和封面会失败，请检查 NAS 是否开机'); }
   const MIN = 60000, every = (key, ms) => { const last = +getMeta(key) || 0; if (Date.now() - last < ms) return false; setMeta(key, Date.now()); return true; };
   for (;;) {
+    const token = acquireBrowser();
+    if (!token) { daemonPhase('waiting', { nextRunAt: new Date(Date.now() + 5000).toISOString() }); await drv.sleep(5000); continue; }
+    daemonPhase('working', { nextRunAt: undefined });
     try {
       if (!(await ensureNas()) && every('nasAlert', 60 * MIN)) await notify('⚠️ 麦田读不到 NAS，已尝试自动挂载但没成功');
       else if (every('scanPlans', 30 * MIN)) { const n = scanPlans(); if (n.length) await notify(`🗓 分发计划新增 ${n.length} 期\n${n.join('\n')}`); }
       for (const ep of episodes()) {
         if (Date.now() - Date.parse(ep.created_at) > 14 * 86400e3) continue;
-        const tasks = getTasks(ep.id); if (!tasks.length) continue;
+        const tasks = getTasks(ep.id).filter(t => isPlatformEnabled(t.platform)); if (!tasks.length) continue;
         const sched = ep.schedule ? Date.parse(ep.schedule) : 0;
         // 知识站：到了定时前 ZSZ_LEAD 分钟自动建课；已建的课复查是否真正上线
         const zt = tasks.find(t => t.platform === 'zsz');
@@ -351,27 +386,28 @@ async function daemon() {
         const unsettled = tasks.filter(t => t.state === 'scheduled' || (t.state === 'published' && !t.url && t.platform !== 'channels'));
         if (waiting.length && every(`remind:${ep.id}`, 20 * MIN)) {
           const changed = await sync(ep, waiting.map(t => t.platform), true).catch(() => false);
-          const still = getTasks(ep.id).filter(t => t.state === 'awaiting_user');
+          const still = getTasks(ep.id).filter(t => isPlatformEnabled(t.platform) && t.state === 'awaiting_user');
           if (still.length && !changed) await notify(`⏰ ${ep.name}\n还在等你点发布：${still.map(t => NAMES[t.platform]).join('、')}${sched ? `\n定时时间 ${ep.schedule.replace('T', ' ').slice(0, 16)}` : ''}`);
         }
         if (unsettled.length && (!sched || Date.now() > sched + 5 * MIN) && Date.now() < (sched || Date.parse(ep.created_at)) + 24 * 3600e3 && every(`sync:${ep.id}`, 30 * MIN)) {
           await sync(ep, unsettled.map(t => t.platform), true).catch((e) => console.error('sync 出错：' + e.message));
-          const left = getTasks(ep.id).filter(t => t.state === 'scheduled');
+          const left = getTasks(ep.id).filter(t => isPlatformEnabled(t.platform) && t.state === 'scheduled');
           if (!left.length && !getMeta(`done:${ep.id}`)) { setMeta(`done:${ep.id}`, 1); await notify(`🎉 ${ep.name}\n全部平台已发布\n${table(ep.id)}`); }
         }
       }
       // 新发的一期头三天加密采样（每 6 小时一次），之后回到每天一次
       for (const ep of episodes()) {
         const pub = Date.parse(ep.schedule || ep.created_at); if (!(Date.now() > pub + 30 * MIN && Date.now() < pub + 72 * 3600e3)) continue;
-        if (!getTasks(ep.id).some(t => t.state === 'published') || !every(`sample:${ep.id}`, (config.sampleHours || 6) * 60 * MIN)) continue;
+        if (!getTasks(ep.id).some(t => isPlatformEnabled(t.platform) && t.state === 'published') || !every(`sample:${ep.id}`, (config.sampleHours || 6) * 60 * MIN)) continue;
         await collectMetrics(ep).catch((e) => console.error('加密采样出错：' + e.message));
       }
       // 登录保活：定期打开一下后台首页（视频号的扫码登录过期快），掉线就提醒，并记下每次保持了多久
-      for (const id of config.keepAlive || []) {
+      for (const id of (config.keepAlive || []).filter(isPlatformEnabled)) {
         if (!every(`keep:${id}`, (config.keepAliveMinutes || 60) * MIN)) continue;
-        const ok = await drv.withTab(LOGIN_PAGES[id], async (t) => !/login|passport|signin/i.test((await chrome.tabs.get(t)).url) && !(await drv.evaluate(t, `/扫码登录/.test(document.body.innerText) && /验证码登录|密码登录/.test(document.body.innerText)`).catch(() => false)), { wait: 12000 }).catch(() => null);
+        const ok = await drv.withTab(LOGIN_PAGES[id], async (tabId) => !/login|passport|signin/i.test((await chrome.tabs.get(tabId)).url) && !(await drv.evaluate(tabId, `/扫码登录/.test(document.body.innerText) && /验证码登录|密码登录/.test(document.body.innerText)`).catch(() => false)), { wait: 12000 }).catch(() => null);
         if (ok === null) continue;
         const was = getMeta(`login:${id}`);
+        saveLogin(id, ok ? 'ok' : 'out', ok ? '' : '页面显示登录入口，请重新登录');
         if (ok && was !== 'ok') { setMeta(`login:${id}`, 'ok'); setMeta(`loginSince:${id}`, Date.now()); }
         if (!ok && was !== 'out') {
           const since = +getMeta(`loginSince:${id}`) || 0; setMeta(`login:${id}`, 'out');
@@ -382,7 +418,7 @@ async function daemon() {
       // X 长文模式：定时前 25 分钟启动长文脚本（每期只启动一次）
       for (const ep of episodes()) {
         const sched = ep.schedule ? Date.parse(ep.schedule) : 0, xt = getTask(ep.id, 'x');
-        if (!sched || !xt || xt.state !== 'scheduled' || Date.now() < sched - 25 * MIN || Date.now() > sched + 20 * MIN || getMeta(`xart:${ep.id}`)) continue;
+        if (!isPlatformEnabled('x') || !sched || !xt || xt.state !== 'scheduled' || Date.now() < sched - 25 * MIN || Date.now() > sched + 20 * MIN || getMeta(`xart:${ep.id}`)) continue;
         let pj; try { pj = loadProject(ep.dir); } catch { continue; }
         if (pj.platforms.x && pj.platforms.x.mode === 'article+quote') { setMeta(`xart:${ep.id}`, Date.now()); startArticleJob(ep, pj); await notify(`🕕 ${ep.name}\nX：启动长文脚本，${new Date(sched).toLocaleTimeString('zh-CN', { hour12: false }).slice(0, 5)} 发长文，再发引用长文的视频帖`); }
       }
@@ -398,16 +434,22 @@ async function daemon() {
       for (const ep of episodes()) {
         const sched = ep.schedule ? Date.parse(ep.schedule) : 0;
         if (!sched || new Date().getHours() < 20 || sched - Date.now() < 6 * 3600e3 || sched - Date.now() > 30 * 3600e3) continue;
-        if (!getTasks(ep.id).some(t => t.state === 'planned') || getMeta(`eve:${ep.id}`)) continue;
+        if (!getTasks(ep.id).some(t => isPlatformEnabled(t.platform) && t.state === 'planned') || getMeta(`eve:${ep.id}`)) continue;
         setMeta(`eve:${ep.id}`, Date.now());
         const bad = await doctor().catch(() => null);
-        if (bad && !bad.length) await notify(`🌙 ${ep.name}\n明天 ${ep.schedule.slice(11, 16)} 发布，${ALL.length} 个平台登录都正常`);
+        if (bad && !bad.length) await notify(`🌙 ${ep.name}\n明天 ${ep.schedule.slice(11, 16)} 发布，${ALL().length} 个平台登录都正常`);
         else if (bad) await notify(`🌙 ${ep.name}\n明天 ${ep.schedule.slice(11, 16)} 发布，今晚先把这些平台登录好：${bad.map(i => NAMES[i]).join('、')}`);
       }
       // 每天上午体检一次，有平台掉线才通知
       const day = new Date().toLocaleDateString('zh-CN');
       if (new Date().getHours() >= 9 && getMeta('doctorDay') !== day) { setMeta('doctorDay', day); await doctor().catch((e) => console.error('体检出错：' + e.message)); }
-    } catch (e) { console.error('守护循环出错：' + e.message); }
+      const nextComments = commentsNextAt();
+      if (nextComments && Date.parse(nextComments) <= Date.now()) {
+        await collectComments(undefined, undefined, true).catch(e => console.error('评论采集出错：' + e.message));
+      }
+      daemonPhase('waiting', { lastCycleAt: new Date().toISOString(), nextRunAt: new Date(Date.now() + 5 * MIN).toISOString() });
+    } catch (e) { daemonPhase('error', { error: e.message, nextRunAt: new Date(Date.now() + 5 * MIN).toISOString() }); console.error('守护循环出错：' + e.message); }
+    finally { releaseBrowser(token); }
     await drv.sleep(5 * MIN);
   }
 }
@@ -417,7 +459,13 @@ try {
   if (cmd === 'run') await run();
   else if (cmd === 'submit') await submitOne();
   else if (cmd === 'sync') { const ep = getEpisode(args[1]); if (!ep) throw new Error('没有这一期，先 hub status 看 id'); await sync(ep, opt('--only') ? opt('--only').split(',') : null); }
-  else if (cmd === 'doctor') await doctor();
+  else if (cmd === 'comments') {
+    const token = process.env.MAITIAN_JOB_ID ? null : acquireBrowser();
+    if (!process.env.MAITIAN_JOB_ID && !token) throw refuse('浏览器正被其他任务使用，请通过任务中心排队采集');
+    try { await collectComments(args[1] && !args[1].startsWith('--') ? args[1] : undefined, opt('--only') || undefined); }
+    finally { if (token) releaseBrowser(token); }
+  }
+  else if (cmd === 'doctor') await doctor(loginPlatforms());
   else if (cmd === 'board') { await drv.ensure(); const r = await boardSync(); console.log(JSON.stringify(r)); }
   else if (cmd === 'review') {   // hub review <id> [天数]：看某一期发布 N 天的复盘（加 --notify 发飞书）
     const R = await import('./review.mjs'); const ep = getEpisode(args[1]); if (!ep) throw new Error('没有这一期，先 hub status 看 id');
@@ -431,13 +479,13 @@ try {
   }
   else if (cmd === 'adopt') {   // 把已经发过的一期登记进来（不上传），按标题去各平台取链接
     const dir = path.resolve(args[1] || ''), pj = loadProject(dir), ep = { id: pj.id, episode: pj.episode, name: pj.name, dir, schedule: pj.schedule || null };
-    upsertEpisode(ep); saveSnapshot(ep.id, pj); for (const id of Object.keys(pj.platforms)) if (!getTask(ep.id, id)) setTask(ep.id, id, 'pending', '登记的往期');
+    upsertEpisode(ep); saveSnapshot(ep.id, pj); for (const id of Object.keys(pj.platforms).filter(isPlatformEnabled)) if (!getTask(ep.id, id)) setTask(ep.id, id, 'pending', '登记的往期');
     await sync(getEpisode(ep.id)); console.log(table(ep.id));
   }
-  else if (cmd === 'login') { await drv.openForLogin(ALL.map(i => LOGIN_PAGES[i])); console.log(`专用 Chrome 已打开 ${ALL.length} 个平台页面，登录完运行 hub doctor 检查`); }
-  else if (cmd === 'followers') { await drv.ensure(); console.log(JSON.stringify(await collectFollowers(opt('--only') ? opt('--only').split(',') : null, opt('--skip') ? opt('--skip').split(',') : []), null, 1)); }
+  else if (cmd === 'login') { const ids = loginPlatforms(); if (!ids.length) throw refuse('未开启任何平台'); await drv.openForLogin(ids.map(i => LOGIN_PAGES[i])); console.log(`专用 Chrome 已打开 ${ids.length} 个平台页面，登录完请重新检查登录状态`); }
+  else if (cmd === 'followers') { if (!enabledPlatforms().length) throw refuse('未开启任何平台'); await drv.ensure(); console.log(JSON.stringify(await collectFollowers(opt('--only') ? opt('--only').split(',') : null, opt('--skip') ? opt('--skip').split(',') : []), null, 1)); }
   else if (cmd === 'daemon') await daemon();
-  else if (cmd === 'web') { const { startWeb } = await import('./web.mjs'); startWeb(); await new Promise(() => {}); }
+  else if (cmd === 'web') { const { startWeb } = await tsImport('./web.ts', import.meta.url); startWeb(); await new Promise(() => {}); }
   else if (cmd === 'status') {
     const list = args[1] && !args[1].startsWith('--') ? [getEpisode(args[1])].filter(Boolean) : episodes().slice(0, 5);
     if (!list.length) console.log('还没有记录');

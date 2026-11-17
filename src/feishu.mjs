@@ -25,7 +25,7 @@ export function toCard(text) {
   const flushText = () => { if (buf.length) { elements.push({ tag: 'markdown', content: buf.map(link).join('\n') }); buf = []; } };
   const flushRows = () => {
     if (!rows.length) return;
-    elements.push({ tag: 'markdown', content: rows.map(([, p, st, detail, url]) => `**${p}**　<font color='${STATE_COLOR(st)}'>${esc(st)}</font>${detail ? `　<font color='grey'>${esc(detail.length > 46 ? detail.slice(0, 46) + '…' : detail)}</font>` : ''}${url ? `　[打开](${url})` : ''}`).join('\n') });
+    elements.push({ tag: 'markdown', content: rows.map(([, p, st, detail, url]) => `**${p}**\u3000<font color='${STATE_COLOR(st)}'>${esc(st)}</font>${detail ? `\u3000<font color='grey'>${esc(detail.length > 46 ? detail.slice(0, 46) + '…' : detail)}</font>` : ''}${url ? `\u3000[打开](${url})` : ''}`).join('\n') });
     rows = [];
   };
   for (const l of lines) {
