@@ -1,4 +1,4 @@
-// 飞书验证码登录：打开麦田 → 点「发送验证码」→ 6 位码推到飞书群 → 输入后这台设备记住 30 天。
+// 飞书验证码登录：打开肥特自媒体工作室 → 点「发送验证码」→ 6 位码推到飞书群 → 输入后这台设备记住 30 天。
 // 开启：config.web.login = "feishu"（需要已配 feishuWebhook）。口令 ?key= 仍然可用，作备用。
 // 安全：验证码 5 分钟有效、只能用一次、输错 5 次作废；60 秒内只能发一次、每小时最多 10 次；
 // 会话 token 随机 32 字节，库里只存哈希（data/sessions.json，不进 git）。
@@ -39,7 +39,7 @@ export async function handleLogin(req: Request, res: Response, u: URL, send: Sen
     const code = String(crypto.randomInt(0, 1e6)).padStart(6, '0');
     pending = { hash: sha(code), at: now, tries: 0 }; sends.push(now);
     const who = ip(req), ua = String(req.headers['user-agent'] || '').match(/iPhone|iPad|Android|Macintosh|Windows/)?.[0] || '未知设备';
-    await notify(`🔐 麦田登录验证码\n验证码：${code}\n5 分钟内有效 · ${ua} · ${who}\n不是你本人在登录就忽略，别把验证码告诉别人`, { quiet: true });
+    await notify(`🔐 肥特自媒体工作室登录验证码\n验证码：${code}\n5 分钟内有效 · ${ua} · ${who}\n不是你本人在登录就忽略，别把验证码告诉别人`, { quiet: true });
     send(res, 200, { ok: true }); return true;
   }
   if (u.pathname === '/login/verify' && req.method === 'POST') {

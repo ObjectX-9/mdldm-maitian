@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { AppContext } from '@/context'
 import { getOverview, runAction, errorMessage } from '@/lib/api'
 import { Button } from '@/components/ui/button'
-import { Badge } from '@/components/ui/badge'
+import { Clock3, Folder, Monitor, Moon, RefreshCw, Settings2, ShieldCheck, Sun } from 'lucide-react'
 import { Empty } from '@/components/common'
 import { cn } from '@/lib/utils'
 import { Dashboard } from '@/pages/Dashboard'
@@ -14,6 +14,10 @@ import { Feedback } from '@/pages/Feedback'
 import { Runtime } from '@/pages/Runtime'
 import { SystemPage } from '@/pages/System'
 import type { Action, Overview } from '@/types'
+import { Topics, type TopicView } from '@/topics/Topics'
+import { WorkspaceSidebar } from '@/components/WorkspaceNav'
+import { SelectControl, SelectOption } from '@/components/ui/select'
+import { useTheme, type ThemePreference } from '@/lib/theme'
 
 const isLoginPage = location.pathname === '/login'
 
@@ -21,10 +25,17 @@ function route() {
   const hash = location.hash.slice(2)
   return hash || (location.pathname === '/p' ? 'traffic' : 'board')
 }
+function WorkspaceClock() {
+  const [now,setNow] = useState(new Date())
+  useEffect(() => {const id=setInterval(()=>{if(!document.hidden)setNow(new Date())},30000);return()=>clearInterval(id)},[])
+  return <div className="workspace-clock"><Clock3 size={14} aria-hidden="true"/><span className="workspace-clock-date">{now.toLocaleDateString('zh-CN', { month: 'numeric', day: 'numeric', weekday: 'short' })}</span><time dateTime={now.toISOString()}>{now.toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' })}</time></div>
+}
 export default function App() {
+  const { preference, dark, changeTheme } = useTheme()
+  const ThemeIcon = preference==='system'?Monitor:dark?Moon:Sun
   const [page, setPage] = useState(route), [overview, setOverview] = useState<Overview | null>(null)
   const [error, setError] = useState(''), [message, setMessage] = useState(''), [submitting, setSubmitting] = useState(false)
-  const [now, setNow] = useState(new Date()), sequence = useRef(0), controller = useRef<AbortController | null>(null), actionPending = useRef(false)
+  const sequence = useRef(0), controller = useRef<AbortController | null>(null), actionPending = useRef(false)
   const refresh = useCallback(async () => {
     const seq = ++sequence.current
     controller.current?.abort()
@@ -36,29 +47,35 @@ export default function App() {
   const busy = submitting || !!overview?.actions.some(a => !a.done)
   useEffect(() => { if (isLoginPage) return; void refresh(); return cancelRefresh }, [refresh, cancelRefresh])
   useEffect(() => { if (isLoginPage) return; const id = setInterval(() => { if (!document.hidden || busy) void refresh() }, busy ? 4000 : 60_000); return () => clearInterval(id) }, [refresh, busy])
-  useEffect(() => { const onHash = () => { setPage(route()); window.scrollTo(0, 0) }; window.addEventListener('hashchange', onHash); return () => window.removeEventListener('hashchange', onHash) }, [])
-  useEffect(() => { const id = setInterval(() => setNow(new Date()), 1000); return () => clearInterval(id) }, [])
+  useEffect(() => { const onHash = () => { const next = route(); setPage(next); document.querySelector('.maitian-workspace')?.scrollTo(0, 0) }; window.addEventListener('hashchange', onHash); return () => window.removeEventListener('hashchange', onHash) }, [])
   useEffect(() => { if (!message) return; const id = setTimeout(() => setMessage(''), 5000); return () => clearTimeout(id) }, [message])
   const run = async (action: Action) => {
     if (actionPending.current || busy) return
     actionPending.current = true; setSubmitting(true)
-    try { await runAction(action); setMessage(action.type === 'login' ? '正在运行麦田的电脑上打开登录页；登录后请再次检查。' : '操作已开始，完成后自动刷新。'); await refresh() }
+    try { await runAction(action); setMessage(action.type === 'login' ? '正在运行肥特自媒体工作室的电脑上打开登录页；登录后请再次检查。' : '操作已开始，完成后自动刷新。'); await refresh() }
     catch (e) { setMessage(errorMessage(e)) }
     finally { actionPending.current = false; setSubmitting(false) }
   }
   const kiosk = new URLSearchParams(location.search).has('kiosk')
   if (isLoginPage) return <LoginPage />
-  if (!overview) return <main className="mx-auto max-w-lg p-10 text-center"><Empty>{error || '加载麦田…'}</Empty><Button onClick={() => void refresh()}>重新加载</Button></main>
-  const nav = [['board', '大屏'], ['traffic', '流量'], ['calendar', '日历'], ['convert', '转化'], ['archive', '档案'], ['tasks', '任务'], ['feedback', '评论'], ['runtime', '运行'], ['system', '系统']].filter(([key]) => key !== 'convert' || overview.siteOn)
+  if (!overview) return <main className="mx-auto max-w-lg p-10 text-center"><Empty>{error || '加载肥特自媒体工作室…'}</Empty><Button onClick={() => void refresh()}>重新加载</Button></main>
   const login = Object.values(overview.health.login), loginOk = login.length > 0 && login.every(s => s === 'ok'), active = page.startsWith('ep/') ? 'archive' : page
-  return <AppContext.Provider value={{ overview, busy, run, refresh }}><div className={cn('mx-auto min-h-screen max-w-[1920px] p-4 md:p-6', kiosk && 'cursor-none')}>
-    <header className="mb-6 flex flex-wrap items-center gap-4"><a href="/" className="text-2xl font-bold tracking-tight">麦<span className="text-primary">田</span></a><span className="hidden text-sm text-muted-foreground 2xl:block">内容与粉丝监控</span>
-      {!kiosk && <nav aria-label="主导航" className="flex max-w-full gap-1 overflow-x-auto rounded-full bg-muted p-1">{nav.map(([key, label]) => <Button key={key} asChild variant={active === key ? 'default' : 'ghost'} size="sm" className="rounded-full"><a href={key === 'board' ? '/' : `/p#/${key}`} aria-current={active === key ? 'page' : undefined}>{label}</a></Button>)}</nav>}
-      <div className="ml-auto text-right text-sm tabular-nums"><div className="text-xs text-muted-foreground">{now.toLocaleDateString('zh-CN', { month: 'numeric', day: 'numeric', weekday: 'short' })}</div>{now.toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' })}</div>
-      <div className="flex w-full flex-wrap gap-2 text-xs"><Badge variant="outline">工程目录 {overview.health.nas ? '可读' : '不可读'}</Badge><Badge variant="outline">专用浏览器 {overview.health.chrome ? '在线' : '未启动'}</Badge><a href="/p#/system"><Badge variant={login.includes('out') ? 'destructive' : 'secondary'}>平台登录 {!overview.enabledPlatforms.length ? '未开启' : loginOk ? '正常' : login.includes('out') ? '有未登录' : '待检查'}</Badge></a></div>
+  const topicView = page.slice('topics/'.length)
+  const isTopics = page.startsWith('topics/') && ['overview', 'library', 'needs', 'apps', 'runs', 'timeline', 'settings'].includes(topicView)
+  return <AppContext.Provider value={{ overview, busy, run, refresh }}><div className={cn('maitian-shell', kiosk && 'is-kiosk cursor-none')}>
+    <header className="maitian-header"><a href="#/board" className="maitian-brand"><img className="maitian-brand-mark" src="/static/site-icon.png" alt=""/><span>肥特自媒体工作室</span></a>
+      <div className="workspace-header-tools">
+        <div className="maitian-health" aria-label="工作台状态"><span className="workspace-health-item" data-state={overview.health.nas?'ok':'warning'}><Folder size={14}/><span>目录{overview.health.nas?'可读':'不可读'}</span><i aria-hidden="true"/></span><span className="workspace-health-item" data-state={overview.health.chrome?'ok':'warning'}><Monitor size={14}/><span>浏览器{overview.health.chrome?'在线':'未启动'}</span><i aria-hidden="true"/></span><a href="#/system" className="workspace-health-item" data-state={loginOk?'ok':'warning'}><ShieldCheck size={14}/><span>登录{!overview.enabledPlatforms.length?'未开启':loginOk?'正常':login.includes('out')?'有异常':'待检查'}</span><i aria-hidden="true"/></a></div>
+        <Button variant="ghost" size="icon-sm" className="workspace-header-action" aria-label="刷新工作台数据" onClick={()=>void refresh()}><RefreshCw/></Button>
+        <SelectControl className="workspace-theme-control" label="主题设置" value={preference} onValueChange={value=>changeTheme(value as ThemePreference)} triggerContent={<span className="workspace-theme-icon"><ThemeIcon size={16}/><span className="sr-only">{preference==='system'?'跟随系统':dark?'深色':'浅色'}</span></span>}><SelectOption value="light"><Sun className="mr-2 inline size-3.5"/>浅色</SelectOption><SelectOption value="dark"><Moon className="mr-2 inline size-3.5"/>深色</SelectOption><SelectOption value="system"><Monitor className="mr-2 inline size-3.5"/>跟随系统</SelectOption></SelectControl>
+        <WorkspaceClock />
+        <Button asChild variant="ghost" size="icon-sm" className="workspace-header-action workspace-header-settings"><a href="#/system" aria-label="系统设置"><Settings2/></a></Button>
+      </div>
     </header>
+    <div className="maitian-body">{!kiosk && <WorkspaceSidebar active={active} siteOn={overview.siteOn} />}<div className="maitian-workspace"><div className={cn('maitian-content', isTopics && 'has-topics', page === 'board' && 'has-board')}>
     {error && <div role="alert" className="mb-4 rounded-lg border border-destructive/30 bg-red-50 p-3 text-sm text-destructive">{error} <Button variant="link" size="sm" onClick={() => void refresh()}>重试</Button></div>}
-    <main>{page === 'board' ? <Dashboard now={now} /> : page === 'traffic' ? <Traffic /> : page === 'calendar' ? <Calendar /> : page === 'convert' && overview.siteOn ? <Conversion /> : page === 'archive' ? <Archive /> : page.startsWith('ep/') ? <EpisodePage id={decodeURIComponent(page.slice(3))} /> : page === 'tasks' ? <TaskCenter /> : page === 'feedback' ? <Feedback /> : page === 'runtime' ? <Runtime /> : page === 'system' ? <SystemPage /> : <Empty>页面不存在</Empty>}</main>
+    <main>{isTopics ? <Topics view={topicView as TopicView} /> : page === 'board' ? <Dashboard /> : page === 'traffic' ? <Traffic /> : page === 'calendar' ? <Calendar /> : page === 'convert' && overview.siteOn ? <Conversion /> : page === 'archive' ? <Archive /> : page.startsWith('ep/') ? <EpisodePage id={decodeURIComponent(page.slice(3))} /> : page === 'tasks' ? <TaskCenter /> : page === 'feedback' ? <Feedback /> : page === 'runtime' ? <Runtime /> : page === 'system' ? <SystemPage /> : <Empty>页面不存在</Empty>}</main>
+    </div></div></div>
     {message && <div role="status" aria-live="polite" className="fixed bottom-6 left-1/2 z-50 w-max max-w-[90vw] -translate-x-1/2 rounded-xl bg-foreground px-5 py-3 text-sm text-background shadow-lg">{message}</div>}
   </div></AppContext.Provider>
 }

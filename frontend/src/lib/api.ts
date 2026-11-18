@@ -5,7 +5,7 @@ const client = axios.create({ baseURL: '/api', timeout: 20_000, withCredentials:
 client.interceptors.response.use(response => response, (error: unknown) => {
   if (axios.isAxiosError(error)) {
     if (error.response?.status === 401) {
-      return Promise.reject(new Error('登录已过期，请使用带口令的地址重新打开麦田，或前往 /login 登录。'))
+      return Promise.reject(new Error('登录已过期，请使用带口令的地址重新打开肥特自媒体工作室，或前往 /login 登录。'))
     }
     const body: unknown = error.response?.data
     const message = typeof body === 'object' && body !== null && 'error' in body && typeof body.error === 'string'
@@ -37,3 +37,9 @@ export const controlRuntime = (action: 'start' | 'stop' | 'restart') => client.p
 
 export const getCommentCollection = (signal?: AbortSignal) => client.get<import('@/types').CommentCollection>('/feedback/collection', { signal }).then(r => r.data)
 export const saveCommentCollection = (settings: import('@/types').CommentSettings) => client.put<{ settings: import('@/types').CommentSettings }>('/feedback/collection', settings).then(r => r.data)
+
+export const topicRequest = <T>(path: string, options?: RequestInit) => client.request<T>({
+  url: `/topics/${path}`, method: options?.method || 'GET',
+  data: options?.body, signal: options?.signal ?? undefined,
+  headers: { 'Content-Type': 'application/json' },
+}).then(response => response.data)

@@ -1,0 +1,14 @@
+import * as SelectPrimitive from '@radix-ui/react-select'
+import type { ComponentProps, ReactNode } from 'react'
+import { Check, ChevronDown, ChevronUp } from 'lucide-react'
+import { cn } from '@/lib/utils'
+
+export function SelectControl({ value, onValueChange, label, className, children, disabled, id, triggerContent }: { value: string; onValueChange: (value: string) => void; label?: string; className?: string; children: ReactNode; disabled?: boolean; id?: string; triggerContent?: ReactNode }) {
+  return <SelectPrimitive.Root value={`value:${value}`} onValueChange={next => onValueChange(next.slice(6))} disabled={disabled}>
+    <SelectPrimitive.Trigger id={id} data-slot="select-trigger" aria-label={label} className={cn('ui-select-trigger studio-select-trigger flex h-9 min-w-0 items-center justify-between gap-3 rounded-lg border border-input bg-card px-3 text-sm text-foreground outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50 [&>span]:truncate', className)}><SelectPrimitive.Value>{triggerContent}</SelectPrimitive.Value><SelectPrimitive.Icon asChild><ChevronDown className="size-3.5 shrink-0 text-muted-foreground"/></SelectPrimitive.Icon></SelectPrimitive.Trigger>
+    <SelectPrimitive.Portal><SelectPrimitive.Content position="popper" sideOffset={6} collisionPadding={12} data-slot="select-content" className="ui-select-content studio-select-content z-[80] max-h-[var(--radix-select-content-available-height)] min-w-[var(--radix-select-trigger-width)] overflow-hidden rounded-xl border bg-card p-1 text-foreground shadow-lg"><SelectPrimitive.ScrollUpButton className="ui-select-scroll flex h-6 items-center justify-center"><ChevronUp className="size-4"/></SelectPrimitive.ScrollUpButton><SelectPrimitive.Viewport className="ui-select-viewport max-h-72 p-0.5">{children}</SelectPrimitive.Viewport><SelectPrimitive.ScrollDownButton className="ui-select-scroll flex h-6 items-center justify-center"><ChevronDown className="size-4"/></SelectPrimitive.ScrollDownButton></SelectPrimitive.Content></SelectPrimitive.Portal>
+  </SelectPrimitive.Root>
+}
+export function SelectOption({ value, className, children, ...props }: Omit<ComponentProps<typeof SelectPrimitive.Item>, 'value'> & { value: string }) {
+  return <SelectPrimitive.Item {...props} value={`value:${value}`} data-slot="select-item" className={cn('ui-select-item studio-select-item relative flex cursor-default select-none items-center rounded-lg py-2 pl-3 pr-9 text-sm outline-none data-[highlighted]:bg-accent data-[highlighted]:text-accent-foreground data-[disabled]:pointer-events-none data-[disabled]:opacity-40', className)}><SelectPrimitive.ItemText>{children}</SelectPrimitive.ItemText><SelectPrimitive.ItemIndicator className="absolute right-3"><Check className="size-3.5"/></SelectPrimitive.ItemIndicator></SelectPrimitive.Item>
+}
