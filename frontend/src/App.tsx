@@ -11,11 +11,14 @@ import { Archive, Calendar, EpisodePage } from '@/pages/Episodes'
 import { LoginPage } from '@/pages/Login'
 import { TaskCenter } from '@/pages/TaskCenter'
 import { Feedback } from '@/pages/Feedback'
+import { TopicWorkbench } from '@/pages/TopicWorkbench'
 import { Runtime } from '@/pages/Runtime'
+import { Services } from '@/pages/Services'
+import { Skills } from '@/pages/Skills'
 import { SystemPage } from '@/pages/System'
 import type { Action, Overview } from '@/types'
 import { Topics, type TopicView } from '@/topics/Topics'
-import { WorkspaceSidebar } from '@/components/WorkspaceNav'
+import { WorkspaceMobileNav, WorkspaceSidebar } from '@/components/WorkspaceNav'
 import { SelectControl, SelectOption } from '@/components/ui/select'
 import { useTheme, type ThemePreference } from '@/lib/theme'
 
@@ -63,7 +66,7 @@ export default function App() {
   const topicView = page.slice('topics/'.length)
   const isTopics = page.startsWith('topics/') && ['overview', 'library', 'needs', 'apps', 'runs', 'timeline', 'settings'].includes(topicView)
   return <AppContext.Provider value={{ overview, busy, run, refresh }}><div className={cn('maitian-shell', kiosk && 'is-kiosk cursor-none')}>
-    <header className="maitian-header"><a href="#/board" className="maitian-brand"><img className="maitian-brand-mark" src="/static/site-icon.png" alt=""/><span>肥特自媒体工作室</span></a>
+    <header className="maitian-header">{!kiosk && <WorkspaceMobileNav active={active} siteOn={overview.siteOn} />}<a href="#/board" className="maitian-brand"><img className="maitian-brand-mark" src="/static/site-icon.png" alt=""/><span>肥特自媒体工作室</span></a>
       <div className="workspace-header-tools">
         <div className="maitian-health" aria-label="工作台状态"><span className="workspace-health-item" data-state={overview.health.nas?'ok':'warning'}><Folder size={14}/><span>目录{overview.health.nas?'可读':'不可读'}</span><i aria-hidden="true"/></span><span className="workspace-health-item" data-state={overview.health.chrome?'ok':'warning'}><Monitor size={14}/><span>浏览器{overview.health.chrome?'在线':'未启动'}</span><i aria-hidden="true"/></span><a href="#/system" className="workspace-health-item" data-state={loginOk?'ok':'warning'}><ShieldCheck size={14}/><span>登录{!overview.enabledPlatforms.length?'未开启':loginOk?'正常':login.includes('out')?'有异常':'待检查'}</span><i aria-hidden="true"/></a></div>
         <Button variant="ghost" size="icon-sm" className="workspace-header-action" aria-label="刷新工作台数据" onClick={()=>void refresh()}><RefreshCw/></Button>
@@ -74,7 +77,7 @@ export default function App() {
     </header>
     <div className="maitian-body">{!kiosk && <WorkspaceSidebar active={active} siteOn={overview.siteOn} />}<div className="maitian-workspace"><div className={cn('maitian-content', isTopics && 'has-topics', page === 'board' && 'has-board')}>
     {error && <div role="alert" className="mb-4 rounded-lg border border-destructive/30 bg-red-50 p-3 text-sm text-destructive">{error} <Button variant="link" size="sm" onClick={() => void refresh()}>重试</Button></div>}
-    <main>{isTopics ? <Topics view={topicView as TopicView} /> : page === 'board' ? <Dashboard /> : page === 'traffic' ? <Traffic /> : page === 'calendar' ? <Calendar /> : page === 'convert' && overview.siteOn ? <Conversion /> : page === 'archive' ? <Archive /> : page.startsWith('ep/') ? <EpisodePage id={decodeURIComponent(page.slice(3))} /> : page === 'tasks' ? <TaskCenter /> : page === 'feedback' ? <Feedback /> : page === 'runtime' ? <Runtime /> : page === 'system' ? <SystemPage /> : <Empty>页面不存在</Empty>}</main>
+    <main>{isTopics ? <Topics view={topicView as TopicView} /> : page === 'board' ? <Dashboard /> : page === 'traffic' ? <Traffic /> : page === 'calendar' ? <Calendar /> : page === 'convert' && overview.siteOn ? <Conversion /> : page === 'archive' ? <Archive /> : page.startsWith('ep/') ? <EpisodePage id={decodeURIComponent(page.slice(3))} /> : page === 'tasks' ? <TaskCenter /> : page === 'feedback' ? <Feedback /> : page === 'topics/workbench' ? <TopicWorkbench /> : page === 'runtime' ? <Runtime /> : page === 'services' ? <Services /> : page === 'skills' ? <Skills /> : page === 'system' ? <SystemPage /> : <Empty>页面不存在</Empty>}</main>
     </div></div></div>
     {message && <div role="status" aria-live="polite" className="fixed bottom-6 left-1/2 z-50 w-max max-w-[90vw] -translate-x-1/2 rounded-xl bg-foreground px-5 py-3 text-sm text-background shadow-lg">{message}</div>}
   </div></AppContext.Provider>

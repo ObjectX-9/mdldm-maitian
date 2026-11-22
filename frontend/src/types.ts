@@ -65,7 +65,11 @@ export type FeedbackStatus = 'pending' | 'replied' | 'ignored'
 export interface FeedbackComment {
   id: string; episode_id: string; episodeName: string; platform: Platform; platformName: string;
   author: string; content: string; url: string; published_at: string; likes: number;
-  category: string; status: FeedbackStatus; created_at: string
+  category: string; status: FeedbackStatus; created_at: string; topic_saved: boolean
+}
+export interface FeedbackTopic {
+  commentId: string; episodeId: string | null; platformName: string; author: string
+  content: string; url: string; sourceEpisodeName: string
 }
 export interface FeedbackData {
   rows: FeedbackComment[]; total: number; pending: number;

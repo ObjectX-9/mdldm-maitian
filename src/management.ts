@@ -1,12 +1,27 @@
 import express from 'express';
 import { listJobs, listPlatformTasks, jobOutput, cancelJob, retryJob } from './jobs.ts';
-import { feedbackList, importFeedback, updateFeedback } from './feedback.ts';
+import { feedbackList, importFeedback, updateFeedback, listFeedbackTopics, saveFeedbackTopic, linkFeedbackTopic } from './feedback.ts';
 import { commentCollectionInfo, saveCommentSettings } from './comments.ts';
 import { runtimeStatus, runtimeLog, recentRuntimeEvents, startDaemon, stopDaemon } from './runtime.ts';
+import { config } from './feishu.mjs';
+import { createServiceMonitor } from './service-monitor.ts';
+import { serviceTraffic } from './service-traffic.ts';
+import { categorizeSkill, listSkillFiles, listSkills, readSkillFile, readSkillImage } from './skills.ts';
 
-export function managementRouter() {
+export function managementRouter(webPort: number) {
   const router = express.Router();
+  const checkServices = createServiceMonitor(config.services, webPort, config.tunnel?.hostname, config.serviceMonitorSshHost);
   router.use((req, res, next) => { res.set('Cache-Control', 'no-store'); next(); });
+  router.get('/services', async (req, res) => { res.json(await checkServices()); });
+  router.get('/services/traffic', (req, res) => res.json(serviceTraffic(req.query.range)));
+  router.get('/skills', (req, res) => res.json(listSkills()));
+  router.get('/skills/files', (req, res) => res.json(listSkillFiles(req.query.id)));
+  router.get('/skills/file', (req, res) => res.json(readSkillFile(req.query.id, req.query.path)));
+  router.get('/skills/image', (req, res) => {
+    const image = readSkillImage(req.query.id, req.query.path);
+    res.set('X-Content-Type-Options', 'nosniff').type(image.imageType).send(image.data);
+  });
+  router.put('/skills/category', (req, res) => res.json(categorizeSkill(req.body?.id, req.body?.category)));
   router.get('/jobs', (req, res) => res.json({ jobs: listJobs(), tasks: listPlatformTasks() }));
   router.get('/jobs/:id/output', (req, res) => res.json(jobOutput(String(req.params.id))));
   router.post('/jobs/:id/cancel', (req, res) => { cancelJob(String(req.params.id)); res.json({ ok: true }); });
@@ -16,6 +31,9 @@ export function managementRouter() {
   router.get('/feedback', (req, res) => res.json(feedbackList(new URL(req.originalUrl, 'http://local').searchParams)));
   router.post('/feedback/import', (req, res) => res.json(importFeedback(req.body || {})));
   router.patch('/feedback/:id', (req, res) => { updateFeedback(String(req.params.id), req.body?.status); res.json({ ok: true }); });
+  router.get('/feedback/topics', (req, res) => res.json(listFeedbackTopics()));
+  router.put('/feedback/topics/:id', (req, res) => { saveFeedbackTopic(req.params.id); res.json({ ok: true }); });
+  router.patch('/feedback/topics/:id', (req, res) => { linkFeedbackTopic(req.params.id, req.body?.episodeId); res.json({ ok: true }); });
   router.get('/runtime', (req, res) => res.json({ ...runtimeStatus(), events: recentRuntimeEvents() }));
   router.get('/runtime/log', (req, res) => res.json(runtimeLog()));
   router.post('/runtime', async (req, res) => {

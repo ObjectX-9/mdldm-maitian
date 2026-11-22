@@ -1,4 +1,5 @@
 import type { Response } from 'express';
+import type { ServiceConfig } from '../shared/services.ts';
 
 export type Send = (res: Response, code: number, body: unknown, type?: string, extra?: Record<string, string>) => Response;
 export interface WebConfig {
@@ -8,6 +9,8 @@ export interface WebConfig {
 export interface RuntimeConfig {
   enabledPlatforms?: string[]; name?: string; web?: WebConfig; chromePort?: number; rootPath: string; driver?: string;
   feishuWebhook?: string; board?: { url?: string }; site?: { logo?: string; base?: string };
+  services?: ServiceConfig[]; serviceMonitorSshHost?: string; tunnel?: { hostname?: string };
+  serviceTraffic?: { tokens?: Record<string, string>; caddyLogs?: Record<string, string> };
 }
 export interface EpisodeRow { id: string; episode: number; name: string; dir: string; schedule: string | null; created_at: string }
 export interface TaskRow { platform: string; state: string; detail: string; url: string; updated_at: string }

@@ -7,6 +7,7 @@ import { db, NAMES, STATE_CN, episodes, getEpisode, getTasks, recentLogs, getSna
 import { config } from './feishu.mjs';
 import { availablePlatforms, enabledPlatforms, isPlatformEnabled, saveEnabledPlatforms } from './platforms.ts';
 import { managementRouter } from './management.ts';
+import { receiveServiceTraffic, startServiceTrafficCollector } from './service-traffic.ts';
 import { topicsRouter } from './topics/router.ts';
 import { initJobQueue, listJobs, jobsBusy, queueAction } from './jobs.ts';
 import { SITE } from './site.mjs';
@@ -92,8 +93,8 @@ function widgetData() {
 }
 const tokenEq = (a: unknown, b: unknown) => typeof a === 'string' && typeof b === 'string' && a.length === b.length && crypto.timingSafeEqual(Buffer.from(a), Buffer.from(b));
 
-const widgetPage = (code: string) => `<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>肥特自媒体工作室小组件</title>
-<style>body{font-family:-apple-system,'PingFang SC',sans-serif;margin:0;padding:22px 18px 40px;background:#f6f1e6;color:#1c1a16;line-height:1.6}h1{font-size:24px;margin:0 0 6px}ol{padding-left:20px;font-size:15px}li{margin:6px 0}
+const widgetPage = (code: string) => `<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"><title>肥特自媒体工作室小组件</title>
+<style>body{font-family:-apple-system,'PingFang SC',sans-serif;margin:0;padding:max(22px,env(safe-area-inset-top)) max(18px,env(safe-area-inset-right)) max(40px,env(safe-area-inset-bottom)) max(18px,env(safe-area-inset-left));background:#f6f1e6;color:#1c1a16;line-height:1.6}h1{font-size:24px;margin:0 0 6px}ol{padding-left:20px;font-size:15px}li{margin:6px 0}
 button{width:100%;height:50px;border:0;border-radius:14px;background:#1c1a16;color:#fff;font-size:17px;font-weight:800;margin:14px 0}pre{background:#fff;border-radius:12px;padding:12px;font-size:11px;max-height:220px;overflow:auto;white-space:pre-wrap;word-break:break-all}
 .tip{font-size:13px;color:#7a7160}</style></head><body><h1>🌾 肥特自媒体工作室小组件</h1>
 <ol><li>App Store 安装 <b>Scriptable</b>（免费）</li><li>点下面的按钮复制脚本（自动更新的加载器，只需粘贴这一次）</li><li>打开 Scriptable → 右上角 <b>＋</b> → 粘贴 → 标题改成「肥特自媒体工作室」；已经有「肥特自媒体工作室」脚本的，打开它全选、粘贴覆盖</li><li>长按桌面 → 左上角 <b>＋</b> → 搜 Scriptable → 选中号 → 添加；长按小组件 → 编辑小组件 → Script 选「肥特自媒体工作室」</li><li>锁屏：长按锁屏 → 自定 → 添加小组件 → Scriptable → 同样选「肥特自媒体工作室」</li></ol>
@@ -156,9 +157,10 @@ function createWebApp() {
   app.use('/api/feedback/import', express.json({ limit: '1mb' }));
   app.use('/api/topics/import', express.json({ limit: '30mb' }));
   app.use(express.json({ limit: '64kb' }));
+  app.post('/api/services/traffic/report', receiveServiceTraffic);
   app.use(authorize);
   app.use('/api/topics', topicsRouter());
-  app.use('/api', managementRouter());
+  app.use('/api', managementRouter(W.port));
   const staticOptions = { index: false as const, setHeaders: (res: http.ServerResponse) => { res.setHeader('Cache-Control', 'no-store'); } };
   app.use('/static', express.static(path.join(DIR, 'web'), staticOptions));
   app.use('/assets', express.static(path.join(DIST, 'assets'), staticOptions));
@@ -172,7 +174,7 @@ function createWebApp() {
     });
   app.get('/widget', async (req, res) => {
    // 小组件安装页（已登录才能看）：脚本里填好肥特自媒体工作室地址和小组件口令，手机上一键复制
-    if (!W.widgetToken) return send(res, 404, '<meta charset="utf-8">没配 config.web.widgetToken', 'text/html; charset=utf-8');
+    if (!W.widgetToken) return send(res, 404, '<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">没配 config.web.widgetToken', 'text/html; charset=utf-8');
     return send(res, 200, widgetPage(widgetScript(req, 'maitian-loader.js')), 'text/html; charset=utf-8');
     });
   app.get('/api/overview', async (req, res) => {
@@ -233,7 +235,11 @@ export function startWeb() {
       vite = await createServer({ configFile: path.join(ROOT, 'vite.config.ts'), server: { middlewareMode: true, hmr: { server: srv } }, appType: 'custom' });
       srv.on('close', () => { void vite?.close(); });
     }
-    srv.listen(W.port, '0.0.0.0', () => console.log(`肥特自媒体工作室网页：http://localhost:${W.port}/?key=${W.key}`));
+    srv.listen(W.port, '0.0.0.0', () => {
+      const stopTrafficCollector = startServiceTrafficCollector();
+      if (stopTrafficCollector) srv.once('close', stopTrafficCollector);
+      console.log(`肥特自媒体工作室网页：http://localhost:${W.port}/?key=${W.key}`);
+    });
   };
   listen().catch(e => { console.error('肥特自媒体工作室网页没起来：' + e.message); process.exitCode = 1; });
   srv.on('error', (e) => console.error('肥特自媒体工作室网页没起来：' + e.message));

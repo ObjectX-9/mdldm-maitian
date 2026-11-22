@@ -20,7 +20,25 @@ export function Calendar() {
   const start = new Date(now.getFullYear(), now.getMonth(), now.getDate() - weekday - 7)
   const days = Array.from({ length: 28 }, (_, i) => new Date(start.getFullYear(), start.getMonth(), start.getDate() + i))
   return <><Heading title="日历">上周到未来两周的分发安排。接下来有 {o.episodes.filter(e => e.schedule && Date.parse(e.schedule) > Date.now()).length} 期排期。</Heading>
-    <div className="overflow-x-auto rounded-2xl border bg-card shadow-sm"><div className="min-w-[700px]"><div className="grid grid-cols-7 border-b">{'一二三四五六日'.split('').map(d => <div key={d} className="p-3 text-xs text-muted-foreground">周{d}</div>)}</div><div className="grid grid-cols-7">{days.map(day => { const key = dayKey(day), list = o.episodes.filter(e => dayKey(new Date(e.schedule || e.createdAt)) === key); return <div key={key} className={cn('min-h-32 border-r border-b p-2 last:border-r-0', key === today ? 'bg-blue-50' : key < today ? 'bg-muted/40' : '')}><div className="mb-2 text-sm font-medium">{day.getDate() === 1 || key === dayKey(start) ? `${day.getMonth() + 1}/` : ''}{day.getDate()}{key === today && <Badge className="ml-2 text-[10px]">今天</Badge>}</div><div className="space-y-2">{list.map(e => <a key={e.id} href={episodeHref(e)} title={e.name} className="flex gap-2 rounded-lg border bg-card p-2 shadow-sm hover:border-primary">{cover(e, '3x4') && <img className="h-12 w-9 rounded object-cover" src={cover(e, '3x4')} alt="" />}<div className="min-w-0"><b className="block truncate text-xs">{e.nick}</b><p className="mt-1 text-[10px] text-muted-foreground">{new Date(e.schedule || e.createdAt).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' })}</p><span className={cn('text-[10px]', episodeState(e) === '异常' ? 'text-destructive' : episodeState(e) === '等你点发布' ? 'text-amber-600' : 'text-primary')}>{episodeState(e)}</span></div></a>)}</div></div> })}</div></div></div>
+    <div className="workspace-calendar rounded-2xl border bg-card shadow-sm">
+      <div className="workspace-calendar-weekdays grid grid-cols-7 border-b">{'一二三四五六日'.split('').map(d => <div key={d} className="p-3 text-xs text-muted-foreground">周{d}</div>)}</div>
+      <div className="workspace-calendar-days grid grid-cols-7">{days.map(day => {
+        const key = dayKey(day), isToday = key === today
+        const list = o.episodes.filter(e => dayKey(new Date(e.schedule || e.createdAt)) === key)
+        return <div key={key} className={cn('workspace-calendar-day min-w-0 min-h-32 border-r border-b p-2', isToday ? 'bg-blue-50' : key < today && 'bg-muted/40')} data-empty={!isToday && !list.length || undefined}>
+          <div className="mb-2 flex flex-wrap items-center gap-2 text-sm font-medium">
+            <time className="workspace-calendar-grid-date" dateTime={key}>{day.getDate() === 1 || key === dayKey(start) ? `${day.getMonth() + 1}/` : ''}{day.getDate()}</time>
+            <time className="workspace-calendar-agenda-date" dateTime={key}>{day.toLocaleDateString('zh-CN', { month: 'long', day: 'numeric', weekday: 'short' })}</time>
+            {isToday && <Badge className="text-[10px]">今天</Badge>}
+          </div>
+          {isToday && !list.length && <p className="workspace-calendar-agenda-date text-sm text-muted-foreground">今天暂无分发安排</p>}
+          <div className="space-y-2">{list.map(e => <a key={e.id} href={episodeHref(e)} title={e.name} className="workspace-calendar-entry flex gap-2 rounded-lg border bg-card p-2 shadow-sm hover:border-primary">
+            {cover(e, '3x4') && <img className="h-12 w-9 shrink-0 rounded object-cover" src={cover(e, '3x4')} alt="" />}
+            <div className="min-w-0"><b className="block truncate text-xs">{e.nick}</b><p className="mt-1 text-[10px] text-muted-foreground">{new Date(e.schedule || e.createdAt).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' })}</p><span className={cn('text-[10px]', episodeState(e) === '异常' ? 'text-destructive' : episodeState(e) === '等你点发布' ? 'text-amber-600' : 'text-primary')}>{episodeState(e)}</span></div>
+          </a>)}</div>
+        </div>
+      })}</div>
+    </div>
     <div className="mt-4 flex flex-wrap gap-3">{['已发布', '已定时', '等你点发布', '计划中', '异常'].map(s => <Badge key={s} variant="outline">{s}</Badge>)}</div>
   </>
 }

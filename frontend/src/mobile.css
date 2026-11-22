@@ -1,0 +1,203 @@
+.maitian-header .workspace-menu-trigger,
+.workspace-data-label,
+.workspace-calendar-agenda-date {
+  display: none;
+}
+
+.workspace-calendar-day:nth-child(7n) {
+  border-right: 0;
+}
+
+.workspace-menu[data-slot=dialog-content] {
+  inset: 0 auto 0 0;
+  align-content: start;
+  width: min(320px, calc(100% - 40px));
+  max-height: 100dvh;
+  translate: none;
+  transform: none;
+  border-radius: 0 16px 16px 0;
+  padding: max(20px, env(safe-area-inset-top)) 16px max(20px, env(safe-area-inset-bottom)) max(16px, env(safe-area-inset-left));
+}
+
+.workspace-menu-group + .workspace-menu-group {
+  margin-top: 14px;
+  padding-top: 14px;
+  border-top: 1px solid var(--border);
+}
+
+.workspace-nav-toggle {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+  text-align: left;
+  cursor: pointer;
+  border-radius: 8px;
+}
+
+.workspace-nav-toggle:hover,
+.workspace-nav-toggle[aria-expanded=false][data-active] {
+  background: var(--muted);
+  color: var(--foreground);
+}
+
+.workspace-nav-toggle:focus-visible {
+  outline: 2px solid var(--ring);
+  outline-offset: -2px;
+}
+
+.workspace-nav-toggle[aria-expanded=false] svg {
+  transform: rotate(-90deg);
+}
+
+.workspace-menu-group .workspace-nav-toggle {
+  min-height: 44px;
+  padding: 0 10px;
+  color: var(--muted-foreground);
+  font-size: 12px;
+}
+
+.workspace-menu .workspace-nav-item {
+  justify-content: flex-start;
+  min-height: 44px;
+  padding-inline: 10px;
+  gap: 10px;
+  color: var(--foreground);
+  font-size: 14px;
+}
+
+.workspace-menu .workspace-nav-item.is-active {
+  background: var(--muted);
+  color: var(--primary);
+}
+
+.workspace-menu .workspace-nav-item svg {
+  color: currentColor;
+}
+
+.workspace-menu .workspace-nav-item span {
+  display: inline;
+}
+
+.workspace-menu .ui-dialog-close[data-slot=button] {
+  min-width: 44px;
+  min-height: 44px;
+}
+
+@media (max-width: 900px) {
+  .maitian-shell .workspace-sidebar {
+    display: none;
+  }
+
+  .maitian-header .workspace-menu-trigger {
+    display: inline-flex;
+    flex: none;
+    min-width: 44px;
+    min-height: 44px;
+  }
+
+  .maitian-shell .maitian-header {
+    padding-inline: max(8px, env(safe-area-inset-left)) max(8px, env(safe-area-inset-right));
+    padding-top: env(safe-area-inset-top);
+    height: calc(56px + env(safe-area-inset-top));
+  }
+
+  .maitian-shell .maitian-content {
+    padding-inline: max(14px, env(safe-area-inset-left)) max(14px, env(safe-area-inset-right));
+    padding-bottom: calc(24px + env(safe-area-inset-bottom));
+  }
+}
+
+@media (min-width: 681px) and (max-width: 900px) {
+  .workspace-calendar-entry { flex-direction: column; }
+  .workspace-calendar-entry b { white-space: normal; overflow-wrap: anywhere; }
+}
+
+@media (max-width: 680px) {
+  .maitian-shell .maitian-header { gap: 4px; }
+  .maitian-shell .maitian-brand { flex: 1; min-width: 0; }
+  .maitian-shell .maitian-brand-mark { flex: none; }
+  .maitian-shell .maitian-brand > span:last-child { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .maitian-shell .workspace-clock,
+  .maitian-shell .workspace-header-settings[data-slot=button] { display: none; }
+  .maitian-shell .workspace-header-action[data-slot=button],
+  .maitian-shell .workspace-theme-control[data-slot=select-trigger] { min-width: 44px; min-height: 44px; }
+
+  .maitian-content > main { overflow-wrap: anywhere; }
+  .maitian-content > main h1 { font-size: clamp(1.375rem, 6vw, 1.75rem); }
+  .maitian-content [data-slot=button],
+  .maitian-content [data-slot=select-trigger],
+  .ui-dialog-content [data-slot=button],
+  [data-slot=select-content] [data-slot=select-item] { min-height: 44px; }
+  .maitian-content [data-slot=select-trigger] { max-width: 100%; }
+  .maitian-content [data-slot=input],
+  .maitian-content [data-slot=textarea] { font-size: 16px; }
+  .maitian-content .ui-disclosure-trigger .truncate { min-width: 0; }
+  .studio-stats { gap: 10px; }
+  .studio-stats .studio-stat-value { font-size: clamp(1.125rem, 5vw, 1.625rem); }
+
+  .workspace-calendar-weekdays,
+  .workspace-calendar-grid-date,
+  .workspace-calendar-day[data-empty] { display: none; }
+  .workspace-calendar-agenda-date,
+  .workspace-calendar-days { display: block; }
+  .workspace-calendar { overflow: clip; }
+  .workspace-calendar-day { min-height: 0; padding: 14px; border: 0; }
+  .workspace-calendar-day:not([data-empty]) ~ .workspace-calendar-day:not([data-empty]) { border-top: 1px solid var(--border); }
+  .workspace-calendar-entry { min-height: 44px; align-items: center; }
+  .workspace-calendar-entry b { white-space: normal; font-size: 14px; }
+  .workspace-calendar-entry p,
+  .workspace-calendar-entry span { font-size: 12px; }
+
+  .workspace-data-table,
+  .workspace-data-table [data-slot=table-body] { display: block; }
+  .workspace-data-table [data-slot=table-header] {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+  }
+  .workspace-data-table [data-slot=table-body] [data-slot=table-row] {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 0 12px;
+    padding: 8px 0;
+    background: transparent;
+  }
+  .maitian-content .workspace-data-table [data-slot=table-cell] {
+    display: block;
+    min-width: 0;
+    padding: 7px 0;
+    border: 0;
+    white-space: normal;
+    overflow-wrap: anywhere;
+  }
+  .workspace-data-table [data-slot=table-cell]:first-child,
+  .workspace-data-table [data-slot=table-cell]:has(button, p) { grid-column: 1 / -1; }
+  .workspace-data-label {
+    display: block;
+    margin-bottom: 3px;
+    color: var(--muted-foreground);
+    font-size: 12px;
+  }
+  .workspace-data-value { min-width: 0; }
+  .workspace-data-value > .flex { flex-wrap: wrap; }
+  .workspace-data-value a { display: inline-flex; align-items: center; min-height: 44px; }
+  .maitian-shell .topics-workspace .topics-actions { max-width: 100%; flex-wrap: wrap; }
+  .maitian-shell .topics-workspace .topics-actions [data-slot=button] { white-space: normal; }
+  .maitian-shell .topics-workspace .detail-tabs > .ui-tabs-list[data-slot=tabs-list] { height: auto; }
+  .maitian-shell .topics-workspace .detail-tabs > .ui-tabs-list[data-slot=tabs-list] > .ui-tabs-trigger[data-slot=tabs-trigger] { min-height: 44px; }
+  .workspace-login { min-height: 100dvh; }
+  .workspace-login [data-slot=button] { min-height: 44px; }
+}
+
+@media (max-width: 480px) {
+  .maitian-shell .topics-workspace .detail-tabs > .ui-tabs-list[data-slot=tabs-list] {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    width: calc(100% - 28px);
+  }
+
+  .maitian-shell .topics-workspace .detail-tabs > .ui-tabs-list[data-slot=tabs-list] > .ui-tabs-trigger[data-slot=tabs-trigger] { padding-inline: 4px; }
+}

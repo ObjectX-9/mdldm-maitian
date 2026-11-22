@@ -16,6 +16,11 @@ db.exec(`CREATE TABLE IF NOT EXISTS feedback_comments (
  content TEXT NOT NULL, url TEXT NOT NULL DEFAULT '', published_at TEXT NOT NULL DEFAULT '',
  likes INTEGER NOT NULL DEFAULT 0, category TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'pending', created_at TEXT NOT NULL
 )`);
+db.exec(`CREATE TABLE IF NOT EXISTS feedback_topics (
+ comment_id TEXT PRIMARY KEY REFERENCES feedback_comments(id),
+ episode_id TEXT REFERENCES episodes(id),
+ created_at TEXT NOT NULL
+)`);
 const fail = (message: string, status = 400): never => { throw Object.assign(new Error(message), { status }); };
 const normalize = (s: string) => s.normalize('NFKC').trim().replace(/\s+/g, ' ');
 function parseCSV(text: string): Record<string, string>[] {
@@ -69,7 +74,9 @@ export function importFeedback(input: { episodeId?: unknown; platform?: unknown;
 }
 export function feedbackList(query: URLSearchParams) {
   const platform = query.get('platform') || '', episode = query.get('episode') || '', status = query.get('status') || '', search = query.get('search') || '';
-  const rows = (db.prepare('SELECT * FROM feedback_comments ORDER BY created_at DESC').all() as unknown as FeedbackRow[])
+  const rows = (db.prepare(`SELECT c.*, t.comment_id IS NOT NULL AS topic_saved
+    FROM feedback_comments c LEFT JOIN feedback_topics t ON t.comment_id = c.id
+    ORDER BY c.created_at DESC`).all() as unknown as (FeedbackRow & { topic_saved: number })[])
     .filter(r => isPlatformEnabled(r.platform) && (!platform || r.platform === platform) && (!episode || r.episode_id === episode) && (!status || r.status === status) && (!search || `${r.author} ${r.content}`.toLowerCase().includes(search.toLowerCase())));
   const total = rows.length, pending = rows.filter(r => r.status === 'pending').length;
   const themes = [...categories.map(c => c.name), '其他'].map(name => ({ name, count: rows.filter(r => r.category === name).length, example: rows.find(r => r.category === name)?.content || '' })).filter(t => t.count).sort((a, b) => b.count - a.count);
@@ -79,7 +86,7 @@ export function feedbackList(query: URLSearchParams) {
     const old = questions.get(key); if (old) old.count++; else questions.set(key, { content: r.content, count: 1, id: r.id });
   }
   return {
-    rows: rows.slice(0, 500).map(r => ({ ...r, episodeName: getEpisode(r.episode_id)?.name || r.episode_id, platformName: NAMES[r.platform] })),
+    rows: rows.slice(0, 500).map(r => ({ ...r, topic_saved: Boolean(r.topic_saved), episodeName: getEpisode(r.episode_id)?.name || r.episode_id, platformName: NAMES[r.platform] })),
     total, pending, themes, questions: [...questions.values()].sort((a, b) => b.count - a.count).slice(0, 10),
     topics: themes.filter(t => ['教程需求', '改进建议', '问题反馈'].includes(t.name)).map(t => ({ title: t.name === '教程需求' ? '补充操作教程与资料' : t.name === '问题反馈' ? '制作常见问题排查说明' : '收集下一期功能改进选题', count: t.count, example: t.example })),
   };
@@ -90,4 +97,32 @@ export function updateFeedback(id: string, status: unknown): void {
   if (!row) return fail('评论不存在', 404);
   if (!isPlatformEnabled(row.platform)) return fail('该平台未开启');
   db.prepare('UPDATE feedback_comments SET status=? WHERE id=?').run(String(status), id);
+}
+
+export function listFeedbackTopics() {
+  const rows = db.prepare(`
+    SELECT t.comment_id AS commentId, t.episode_id AS episodeId, c.platform, c.author,
+           c.content, c.url, COALESCE(e.name, c.episode_id) AS sourceEpisodeName
+    FROM feedback_topics t
+    JOIN feedback_comments c ON c.id = t.comment_id
+    LEFT JOIN episodes e ON e.id = c.episode_id
+    ORDER BY t.created_at DESC
+  `).all() as { commentId: string; episodeId: string | null; platform: string; author: string; content: string; url: string; sourceEpisodeName: string }[];
+  return rows.map(row => ({ ...row, platformName: NAMES[row.platform] || row.platform }));
+}
+
+export function saveFeedbackTopic(commentId: string): void {
+  const comment = db.prepare('SELECT platform FROM feedback_comments WHERE id = ?').get(commentId) as { platform: string } | undefined;
+  if (!comment) return fail('评论不存在', 404);
+  if (!isPlatformEnabled(comment.platform)) return fail('该平台未开启', 422);
+  db.prepare(`INSERT INTO feedback_topics (comment_id, created_at) VALUES (?, ?)
+    ON CONFLICT(comment_id) DO NOTHING`).run(commentId, new Date().toISOString());
+}
+
+export function linkFeedbackTopic(commentId: string, episodeId: unknown): void {
+  if (episodeId !== null && (typeof episodeId !== 'string' || !getEpisode(episodeId))) {
+    return fail('请选择已有的一期作品', 422);
+  }
+  const result = db.prepare('UPDATE feedback_topics SET episode_id = ? WHERE comment_id = ?').run(episodeId, commentId);
+  if (!result.changes) return fail('选题不存在', 404);
 }

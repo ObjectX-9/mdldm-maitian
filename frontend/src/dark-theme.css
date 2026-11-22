@@ -63,6 +63,8 @@
 :root[data-theme=dark] .ui-segmented > .ui-moving-indicator { background:#44444c; box-shadow:none; }
 :root[data-theme=dark] .maitian-shell .topics-workspace .detail-tabs > .ui-tabs-list[data-slot=tabs-list] > .ui-moving-indicator { background:#fafafa; }
 :root[data-theme=dark] .maitian-shell .topics-workspace .detail-tabs > .ui-tabs-list[data-slot=tabs-list] > .ui-tabs-trigger[data-slot=tabs-trigger][data-state=active] { color:#18181b; }
+:root[data-theme=dark] .maitian-shell .topics-workspace .detail-tabs > .ui-tabs-list[data-slot=tabs-list] > .ui-tabs-trigger[data-slot=tabs-trigger][data-state=inactive] { color:#a1a1aa; }
+:root[data-theme=dark] .maitian-shell .topics-workspace .detail-tabs > .ui-tabs-list[data-slot=tabs-list] > .ui-tabs-trigger[data-slot=tabs-trigger][data-state=inactive]:hover { color:#fafafa; background:#333338; }
 :root[data-theme=dark] .maitian-shell .topics-workspace .detail-tabs > .ui-tabs-list[data-slot=tabs-list] > .ui-tabs-trigger[data-state=active] > span { color:#27272a; background:rgb(0 0 0 / 10%); }
 :root[data-theme=dark] .maitian-shell .topics-workspace .detail-tabs > .ui-tabs-list[data-slot=tabs-list] > .ui-tabs-trigger > span { color:#a1a1aa; background:#36363b; }
 :root[data-theme=dark] .maitian-shell .topics-workspace .platform-filter button.active { color:#fafafa; background:#44444c; }

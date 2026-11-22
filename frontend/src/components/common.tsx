@@ -40,7 +40,14 @@ export function ActionButton({ action, children, primary, confirm }: { action: A
   return confirm ? <ConfirmButton variant={primary ? 'default' : 'outline'} size="sm" disabled={disabled} title="确认执行此操作？" description={confirm} onConfirm={() => void run(action)}>{children}</ConfirmButton> : <Button variant={primary ? 'default' : 'outline'} size="sm" disabled={disabled} onClick={() => void run(action)}>{children}</Button>
 }
 export function DataTable({ headers, rows }: { headers: string[]; rows: { key: string; cells: ReactNode[] }[] }) {
-  return rows.length ? <Table><TableHeader><TableRow>{headers.map((h, i) => <TableHead key={i} className="whitespace-nowrap">{h}</TableHead>)}</TableRow></TableHeader><TableBody>{rows.map(r => <TableRow key={r.key}>{r.cells.map((c, i) => <TableCell key={i} className="whitespace-nowrap tabular-nums">{c}</TableCell>)}</TableRow>)}</TableBody></Table> : <Empty />
+  return rows.length ? <Table className="workspace-data-table" role="table">
+    <TableHeader role="rowgroup"><TableRow role="row">{headers.map((h, i) => <TableHead key={i} role="columnheader" scope="col" className="whitespace-nowrap">{h}</TableHead>)}</TableRow></TableHeader>
+    <TableBody role="rowgroup">{rows.map(row => <TableRow key={row.key} role="row">
+      {row.cells.map((cell, i) => <TableCell key={i} role="cell" className="whitespace-nowrap tabular-nums">
+        <span className="workspace-data-label" aria-hidden="true">{headers[i]}</span><div className="workspace-data-value">{cell}</div>
+      </TableCell>)}
+    </TableRow>)}</TableBody>
+  </Table> : <Empty />
 }
 export function EpisodeLink({ episode: e }: { episode: Episode }) {
   return <a className="inline-flex items-center gap-3 hover:text-primary" href={episodeHref(e)} title={e.name}>{cover(e) && <img className="h-10 w-14 rounded-md object-cover" src={cover(e)} alt="" />}<span><b className="block font-medium">{e.nick}</b><small className="text-muted-foreground">第 {e.episode} 期 · {when(e.schedule || e.createdAt)}</small></span></a>

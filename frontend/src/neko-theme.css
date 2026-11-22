@@ -340,7 +340,7 @@
   border:0; border-radius:8px; color:#787881; background:transparent;
   font-size:12px; font-weight:550; line-height:1; box-shadow:none;
 }
-.maitian-shell .topics-workspace .detail-tabs > .ui-tabs-list[data-slot=tabs-list] > .ui-tabs-trigger[data-slot=tabs-trigger]:hover { color:#27272a; }
+.maitian-shell .topics-workspace .detail-tabs > .ui-tabs-list[data-slot=tabs-list] > .ui-tabs-trigger[data-slot=tabs-trigger]:hover { color:var(--foreground); }
 .maitian-shell .topics-workspace .detail-tabs > .ui-tabs-list[data-slot=tabs-list] > .ui-tabs-trigger[data-slot=tabs-trigger][data-state=active] { color:#fff; background:transparent; font-weight:600; box-shadow:none; }
 .maitian-shell .topics-workspace .detail-tabs > .ui-tabs-list[data-slot=tabs-list] > .ui-moving-indicator { top:0; height:var(--selection-height,32px); border-radius:8px; background:var(--primary); box-shadow:0 1px 3px rgb(24 24 27 / 12%); }
 .maitian-shell .topics-workspace .detail-tabs > .ui-tabs-list[data-slot=tabs-list] > .ui-tabs-trigger > svg { display:block; width:14px; height:14px; stroke-width:1.8; }

@@ -8,7 +8,7 @@ import { useApp } from '@/context'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { DataTable, Empty, ExternalLink, Heading, Panel, PlatformLabel, Section, Stat, Stats } from '@/components/common'
-import { errorMessage, getFeedback, importFeedback, updateFeedback } from '@/lib/api'
+import { errorMessage, getFeedback, importFeedback, saveFeedbackTopic, updateFeedback } from '@/lib/api'
 import { useResource } from '@/hooks/use-resource'
 import { when } from '@/lib/format'
 import type { FeedbackStatus, Platform } from '@/types'
@@ -21,6 +21,19 @@ export function Feedback() {
   const [episode, setEpisode] = useState(''), [platform, setPlatform] = useState<Platform | ''>(''), [format, setFormat] = useState('lines'), [text, setText] = useState('')
   const [filterPlatform, setFilterPlatform] = useState(''), [filterEpisode, setFilterEpisode] = useState(''), [filterStatus, setFilterStatus] = useState(''), [search, setSearch] = useState('')
   const [message, setMessage] = useState(''), [pending, setPending] = useState(false)
+  const [topicError, setTopicError] = useState('')
+  const saveTopic = async (id: string) => {
+    setPending(true)
+    setTopicError('')
+    try {
+      await saveFeedbackTopic(id)
+      location.hash = '/topics/workbench'
+    } catch (e) {
+      setTopicError(errorMessage(e))
+    } finally {
+      setPending(false)
+    }
+  }
   const perform = async (action: () => Promise<string>) => {
     setPending(true); setMessage('')
     try { setMessage(await action()); await refresh() } catch (e) { setMessage(errorMessage(e)) } finally { setPending(false) }
@@ -57,7 +70,10 @@ export function Feedback() {
         <SelectControl label="按状态筛选评论" className="rounded-md border bg-background p-2 text-sm" value={filterStatus} onValueChange={value => setFilterStatus(value)}><SelectOption value="">全部状态</SelectOption>{Object.entries(statusNames).map(([s, label]) => <SelectOption key={s} value={s}>{label}</SelectOption>)}</SelectControl>
         <Input aria-label="搜索评论" className="rounded-md border bg-background px-3 text-sm" placeholder="搜索作者或内容" value={search} onChange={e => setSearch(e.target.value)} maxLength={200} /><Button size="sm" type="submit" variant="outline">筛选</Button>
       </form>
-      <DataTable headers={['平台 / 作品', '作者 / 时间', '内容', '主题', '点赞', '状态', '来源']} rows={(data?.rows || []).map(r => ({ key: r.id, cells: [<div className="space-y-2"><PlatformLabel platform={r.platform} /><p className="max-w-48 truncate text-xs text-muted-foreground">{r.episodeName}</p></div>, <div><b>{r.author || '匿名'}</b><p className="mt-1 text-xs text-muted-foreground">{r.published_at || when(r.created_at)}</p></div>, <p className="max-w-md whitespace-pre-wrap break-words text-sm leading-6">{r.content}</p>, <Badge variant="secondary">{r.category}</Badge>, r.likes, <SelectControl label="评论处理状态" className="rounded-md border bg-background p-2 text-xs" value={r.status} disabled={pending} onValueChange={value => void perform(async () => { await updateFeedback(r.id, value as FeedbackStatus); return '处理状态已更新。' })}>{Object.entries(statusNames).map(([status, label]) => <SelectOption key={status} value={status}>{label}</SelectOption>)}</SelectControl>, <ExternalLink url={r.url} />] }))} />
+      {topicError && <p role="alert" className="mb-3 text-sm text-destructive">{topicError}</p>}
+      <DataTable headers={['平台 / 作品', '作者 / 时间', '内容', '主题', '点赞', '状态', '来源', '选题']} rows={(data?.rows || []).map(r => ({ key: r.id, cells: [<div className="space-y-2"><PlatformLabel platform={r.platform} /><p className="max-w-48 truncate text-xs text-muted-foreground">{r.episodeName}</p></div>, <div><b>{r.author || '匿名'}</b><p className="mt-1 text-xs text-muted-foreground">{r.published_at || when(r.created_at)}</p></div>, <p className="max-w-md whitespace-pre-wrap break-words text-sm leading-6">{r.content}</p>, <Badge variant="secondary">{r.category}</Badge>, r.likes, <SelectControl label="评论处理状态" className="rounded-md border bg-background p-2 text-xs" value={r.status} disabled={pending} onValueChange={value => void perform(async () => { await updateFeedback(r.id, value as FeedbackStatus); return '处理状态已更新。' })}>{Object.entries(statusNames).map(([status, label]) => <SelectOption key={status} value={status}>{label}</SelectOption>)}</SelectControl>, <ExternalLink url={r.url} />, r.topic_saved
+        ? <Button asChild size="sm" variant="link"><a href="#/topics/workbench">已存为选题</a></Button>
+        : <Button size="sm" variant="outline" disabled={pending} onClick={() => void saveTopic(r.id)}>存为选题</Button>] }))} />
     </Panel></Section>
   </>
 }
