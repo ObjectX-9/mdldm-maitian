@@ -2,10 +2,14 @@ import type { Response } from 'express';
 import type { ServiceConfig } from '../shared/services.ts';
 
 export type Send = (res: Response, code: number, body: unknown, type?: string, extra?: Record<string, string>) => Response;
+export interface PasswordLoginConfig {
+  username: string; salt: string; digest: string; origin: string;
+}
 export interface WebConfig {
   port: number; key: string; login?: string; widgetToken?: string; owner?: string; avatar?: string;
   access?: { team: string; aud: string; emails?: string[] };
   publicResearch?: boolean; proxyKey?: string;
+  passwordLogin?: PasswordLoginConfig;
 }
 export interface RuntimeConfig {
   enabledPlatforms?: string[]; name?: string; web?: WebConfig; chromePort?: number; rootPath: string; driver?: string;
@@ -50,5 +54,5 @@ export interface EpisodeView {
   }[];
   files?: string[];
 }
-export interface ActionInput { type: string; id?: string; platform?: string; state?: string; note?: string; url?: string }
+export interface ActionInput { type: string; id?: string; platform?: string; state?: string; note?: string; url?: string; draft?: { title: string; body: string } }
 export interface ActionRecord { type: string; label: string; startedAt: string; done: boolean; ok: boolean | null; tail: string; endedAt?: string }

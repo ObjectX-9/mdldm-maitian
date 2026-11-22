@@ -60,10 +60,13 @@ export async function links(project, ids) {
   return (await load()).pub.collectLinks(project, ids, {});
 }
 export async function openForLogin(urls) { const l = await load(); await l.shim.launchChrome({ foreground: true }); for (const u of urls) await chrome.tabs.create({ url: u, active: true }); }
+export async function openTab(url) { await load(); return (await chrome.tabs.create({ url, active: true })).id; }
+export async function closeTab(tabId) { await load(); await chrome.tabs.remove(tabId); }
+export async function openedTab(openerId, origin) { return (await load()).shim.openedTab(openerId, origin); }
 export async function close() { if (lib) lib.shim.closeConnection(); }
 // 页面截图（存档用），返回 JPEG Buffer
-export async function screenshot(tabId) {
-  const params = { format: 'jpeg', quality: 70 };
+export async function screenshot(tabId, clip) {
+  const params = clip ? { format: 'png', clip } : { format: 'jpeg', quality: 70 };
   const r = mode === 'plugin' ? await bridge.call({ op: 'cdp', tabId, method: 'Page.captureScreenshot', params }) : await (await load()).cdp.send(tabId, 'Page.captureScreenshot', params);
   return Buffer.from(r.data, 'base64');
 }

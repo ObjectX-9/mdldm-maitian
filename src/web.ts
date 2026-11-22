@@ -3,21 +3,24 @@ import express, { type Request, type Response, type NextFunction, type ErrorRequ
 import type { ViteDevServer } from 'vite';
 import type { EpisodeRow, EpisodeView, FollowerRow, LogRow, MetricRow, PublishProject, Send, SiteDailyRow, WebConfig } from './server-types.ts';
 import http from 'node:http'; import crypto from 'node:crypto'; import fs from 'node:fs'; import path from 'node:path'; import { execFileSync } from 'node:child_process'; import { fileURLToPath } from 'node:url';
-import { db, NAMES, STATE_CN, episodes, getEpisode, getTasks, recentLogs, getSnapshot, getMeta } from './db.mjs';
+import { db, NAMES, STATE_CN, episodes, getEpisode, getTasks, recentLogs, getSnapshot, getMeta, setMeta } from './db.mjs';
 import { config } from './feishu.mjs';
 import { availablePlatforms, enabledPlatforms, isPlatformEnabled, saveEnabledPlatforms } from './platforms.ts';
 import { managementRouter } from './management.ts';
 import { receiveServiceTraffic, startServiceTrafficCollector } from './service-traffic.ts';
 import { topicsRouter } from './topics/router.ts';
 import { initJobQueue, listJobs, jobsBusy, queueAction } from './jobs.ts';
+import { acquireBrowser, releaseBrowser } from './browser-lock.ts';
+import { wechatLoginQr, wechatReadingHistory } from './wechat.ts';
 import { SITE } from './site.mjs';
 import { review } from './review.mjs';
 import { accessEmail } from './access.mjs';
-import { initLogin, sessionOk, handleLogin } from './login.ts';
+import { initLogin, sessionOk, studioSessionOk, handleLogin, handlePasswordLogin } from './login.ts';
 
 const DIR = path.dirname(fileURLToPath(import.meta.url)), ROOT = path.resolve(DIR, '..');
 const W: WebConfig = config.web || { port: 8787, key: '' };
 const LOGIN = W.login === 'feishu' && config.feishuWebhook;
+const PASSWORD_LOGIN = W.publicResearch ? W.passwordLogin : undefined;
 const send: Send = (res, code, body, type = 'application/json; charset=utf-8', extra = {}) => { return res.status(code).set({ 'content-type': type, 'cache-control': 'no-store', ...extra }).send(typeof body === 'string' || Buffer.isBuffer(body) ? body : JSON.stringify(body)); };
 const readPj = (dir: string): PublishProject | null => { try { return JSON.parse(fs.readFileSync(path.join(dir, 'publish.json'), 'utf8')); } catch { return null; } };
 const short = (n: string) => n.split(/[｜|]/)[0].trim();
@@ -129,7 +132,21 @@ async function authorize(req: Request, res: Response, next: NextFunction) {
     const publicRead = read && (['/', '/manifest.webmanifest', '/static/site-icon.png', '/api/topics/bootstrap'].includes(u.pathname)
       || /^\/static\/icon-\d+\.png$/.test(u.pathname)
       || u.pathname.startsWith('/assets/') || u.pathname.startsWith('/api/topics/assets/'));
-    if (!publicRead && (!W.proxyKey || !tokenEq(req.get('x-maitian-proxy-key'), W.proxyKey))) {
+    const trustedProxy = !!W.proxyKey && tokenEq(req.get('x-maitian-proxy-key'), W.proxyKey);
+    if (PASSWORD_LOGIN && !publicRead) {
+      if (read && u.pathname === '/login') return next();
+      if (!trustedProxy) return send(res, 401, { error: '需要登录' });
+      const loggedIn = studioSessionOk(req);
+      if (!read && (loggedIn || u.pathname.startsWith('/login/')) && req.get('x-maitian-request-origin') !== PASSWORD_LOGIN.origin) {
+        return send(res, 403, { error: '跨域请求已拒绝' });
+      }
+      if (await handlePasswordLogin(req, res, u, send, PASSWORD_LOGIN)) return;
+      if (!loggedIn) {
+        if (read && !u.pathname.startsWith('/api/')) return send(res, 302, '', 'text/plain', { location: '/login' });
+        return send(res, 401, { error: '需要登录' });
+      }
+    }
+    if (!publicRead && !trustedProxy) {
       return send(res, 401, { error: '需要登录' });
     }
   }
@@ -175,13 +192,12 @@ function createWebApp() {
   app.use('/assets', express.static(path.join(DIST, 'assets'), staticOptions));
   app.get(['/', '/p', '/board', '/login', ...(W.publicResearch ? ['/studio'] : [])], async (req, res) => {
     const u = new URL(req.originalUrl, 'http://x');
-    if (u.pathname === '/login' && !LOGIN) return send(res, 404, { error: 'not found' });
+    if (u.pathname === '/login' && !LOGIN && !PASSWORD_LOGIN) return send(res, 404, { error: 'not found' });
     const f = path.join(vite ? ROOT + '/frontend' : DIST, 'index.html');
     if (!fs.existsSync(f)) return send(res, 503, '<meta charset="utf-8">请先执行 pnpm build，开发时使用 pnpm dev。', 'text/html; charset=utf-8');
     const index = fs.readFileSync(f, 'utf8');
-    const html = W.publicResearch && u.pathname === '/'
-      ? index.replace('<html lang="zh-CN">', '<html lang="zh-CN" data-public-research>')
-      : index;
+    const researchEntry = W.publicResearch && u.pathname === '/';
+    const html = index.replace('<html lang="zh-CN">', `<html lang="zh-CN"${researchEntry ? ' data-public-research' : ''}${PASSWORD_LOGIN ? ' data-password-login' : ''}>`);
     return send(res, 200, vite ? await vite.transformIndexHtml(u.pathname, html) : html, 'text/html; charset=utf-8');
     });
   app.get('/widget', async (req, res) => {
@@ -197,6 +213,7 @@ function createWebApp() {
         campaigns: db.prepare('SELECT * FROM site_campaigns ORDER BY reg DESC').all(), campaignsOn: getMeta('siteCampaigns') === 'on' },
       metrics: db.prepare('SELECT day, episode_id, platform, views FROM metrics ORDER BY day').all(),
       followers: db.prepare("SELECT day, platform, total, gain, loss, source FROM followers WHERE day >= date('now','localtime','-40 day') ORDER BY day").all(),
+      wechatReading: wechatReadingHistory(),
       samples: db.prepare('SELECT ts, episode_id, platform, views FROM samples ORDER BY ts').all(),
       feed: feed(), health: { nas: fs.existsSync(config.rootPath), chrome: await chromeUp(), metricsDay: getMeta('metricsDay') || '', doctorDay: getMeta('doctorDay') || '', login: Object.fromEntries(enabledPlatforms().map(k => [k, getMeta(`login:${k}`) || 'unknown'])), accounts: enabledPlatforms().map(k => ({ platform: k, name: NAMES[k], status: getMeta(`login:${k}`) || 'unknown', checkedAt: getMeta(`loginCheckedAt:${k}`) || '', reason: getMeta(`loginReason:${k}`) || '' })) }, now: new Date().toISOString() });
     });
@@ -221,6 +238,21 @@ function createWebApp() {
     return send(res, 200, { enabledPlatforms: platforms });
   });
   app.post('/api/action', (req, res) => send(res, 200, { ok: true, ...queueAction(req.body) }));
+  app.post('/api/wechat/login-qr', async (req, res) => {
+    if (!isPlatformEnabled('wechat')) return send(res, 409, { error: '请先开启微信公众号' });
+    const lock = acquireBrowser();
+    if (!lock) return send(res, 409, { error: '专用 Chrome 正在执行其他任务，请稍后再试' });
+    try {
+      const result = await wechatLoginQr();
+      if (result.loggedIn) {
+        setMeta('login:wechat', 'ok');
+        setMeta('loginCheckedAt:wechat', new Date().toISOString());
+        setMeta('loginReason:wechat', '');
+      }
+      return send(res, 200, result);
+    }
+    finally { releaseBrowser(lock); }
+  });
   app.use((req, res, next) => {
     const u = new URL(req.originalUrl, 'http://x');
     if (vite && isViteAsset(u.pathname)) return vite.middlewares(req, res, next);

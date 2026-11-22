@@ -33,8 +33,10 @@ const { enabledPlatforms, isPlatformEnabled } = await tsImport('./platforms.ts',
 const { collectComments, commentsNextAt } = await tsImport('./comments.ts', import.meta.url);
 const { beginDaemon, daemonPhase } = await tsImport('./runtime.ts', import.meta.url);
 const { acquireBrowser, releaseBrowser } = await tsImport('./browser-lock.ts', import.meta.url);
+const { WECHAT_HOME, checkWechatLogin, saveWechatDraft, wechatDraftInput } = await tsImport('./wechat.ts', import.meta.url);
 const ALL = enabledPlatforms;   // 没配自有站点就不管 zsz
 const LOGIN_PAGES = { bilibili: 'https://member.bilibili.com/platform/upload/video/frame', xhs: 'https://creator.xiaohongshu.com/publish/publish?source=official&target=video', douyin: 'https://creator.douyin.com/creator-micro/content/upload', channels: 'https://channels.weixin.qq.com/platform/post/create', youtube: 'https://studio.youtube.com/', x: 'https://x.com/home', instagram: 'https://www.instagram.com/', zsz: SITE ? SITE.admin : '' };
+LOGIN_PAGES.wechat = WECHAT_HOME;
 
 function table(eid) {
   return getTasks(eid).map(t => `${NAMES[t.platform] || t.platform}：${STATE_CN[t.state] || t.state}${t.detail ? `（${t.detail.slice(0, 80)}）` : ''}${t.url ? ` ${t.url}` : ''}`).join('\n');
@@ -286,15 +288,19 @@ function saveLogin(id, status, reason = '') {
 async function doctor(ids = ALL()) {
   ids = ids.filter(isPlatformEnabled);
   if (!ids.length) { console.log('未开启任何平台'); return []; }
-  let r;
-  try { await drv.ensure(); r = await drv.checkLogin(ids); }
-  catch (e) { for (const id of ids) saveLogin(id, 'error', e.message); throw e; }
+  let r = {};
+  const publishing = ids.filter(id => id !== 'wechat');
+  if (publishing.length) {
+    try { await drv.ensure(); r = (await drv.checkLogin(publishing)) || {}; }
+    catch (e) { r = Object.fromEntries(publishing.map(id => [id, { ok: false, reason: e.message }])); }
+  }
+  if (ids.includes('wechat')) r.wechat = await checkWechatLogin().catch(e => ({ ok: false, reason: e.message }));
   for (const id of ids) {
     const result = r[id], reason = result ? result.reason || '' : '没有检测结果';
     saveLogin(id, result && result.ok ? 'ok' : /没有登录|未登录|跳到了登录页|页面显示扫码登录/.test(reason) ? 'out' : 'error', reason);
   }
   if (ALL().every(id => ids.includes(id))) setMeta('doctorDay', new Date().toLocaleDateString('zh-CN'));
-  const lines = ids.map(id => `${NAMES[id]}：${r[id] && r[id].ok ? '✅ 已登录，上传页正常' : `❌ ${r[id] ? r[id].reason : '没有结果'}`}`);
+  const lines = ids.map(id => `${NAMES[id]}：${r[id] && r[id].ok ? (id === 'wechat' ? '✅ 已登录' : '✅ 已登录，上传页正常') : `❌ ${r[id] ? r[id].reason : '没有结果'}`}`);
   const bad = ids.filter(id => !(r[id] && r[id].ok));
   console.log(lines.join('\n'));
   if (args.includes('--notify') || bad.length) await notify(`🩺 发布中控体检（${drv.mode === 'plugin' ? '插件方式' : '专用 Chrome'}）\n${lines.join('\n')}`);
@@ -353,19 +359,61 @@ function scanPlans() {
 }
 
 // 常驻：每 5 分钟看一眼。到了定时时间自动取链接；你还没点的平台定时提醒并检查
+async function scheduledTraffic(includeReports) {
+  const day = new Date().toLocaleDateString('zh-CN');
+  if (new Date().getHours() < 10 || getMeta('metricsDay') === day) return;
+  setMeta('metricsDay', day);
+  await metricsReport(episodes().filter(e => Date.now() - Date.parse(e.created_at) < 30 * 86400e3)).catch((e) => console.error('流量采集出错：' + e.message));
+  if (!includeReports) return;
+  // 第 1/3/7 天的复盘卡片和周报每条只发一次。
+  try { const R = await import('./review.mjs'); for (const t of R.due((k) => { if (getMeta(k)) return false; setMeta(k, Date.now()); return true; })) await notify(t); }
+  catch (e) { console.error('复盘出错：' + e.message); }
+}
+
+async function scheduledComments() {
+  const nextComments = commentsNextAt();
+  if (nextComments && Date.parse(nextComments) <= Date.now()) {
+    await collectComments(undefined, undefined, true).catch(e => console.error('评论采集出错：' + e.message));
+  }
+}
+
+async function scheduledSamples(every, minute) {
+  // 新发作品前三天按原采样间隔加密采样。
+  for (const ep of episodes()) {
+    const pub = Date.parse(ep.schedule || ep.created_at); if (!(Date.now() > pub + 30 * minute && Date.now() < pub + 72 * 3600e3)) continue;
+    if (!getTasks(ep.id).some(t => isPlatformEnabled(t.platform) && t.state === 'published') || !every(`sample:${ep.id}`, (config.sampleHours || 6) * 60 * minute)) continue;
+    await collectMetrics(ep).catch((e) => console.error('加密采样出错：' + e.message));
+  }
+}
+
 async function daemon() {
+  const collectionsOnly = args.includes('--collections-only');
   beginDaemon();
   if (!process.env.HUB_NO_WEB && config.web) { const { startWeb } = await tsImport('./web.ts', import.meta.url); startWeb(); }
-  console.log(`发布中控守护进程启动（${drv.mode}）`);
+  console.log(`${collectionsOnly ? '定时采集' : '发布中控'}守护进程启动（${drv.mode}）`);
   // 开机后 NAS 往往比守护进程晚挂上：等一等，自己挂一次（密码在钥匙串里），5 分钟还不行再报警
-  { let ok = false; for (let i = 0; i < 10 && !(ok = await ensureNas()); i++) await drv.sleep(30000);
+  if (!collectionsOnly) { let ok = false; for (let i = 0; i < 10 && !(ok = await ensureNas()); i++) await drv.sleep(30000);
     if (ok) console.log('NAS 可读'); else await notify('⚠️ 麦田守护进程启动 5 分钟后仍读不到 NAS（已尝试自动挂载），取链接和封面会失败，请检查 NAS 是否开机'); }
   const MIN = 60000, every = (key, ms) => { const last = +getMeta(key) || 0; if (Date.now() - last < ms) return false; setMeta(key, Date.now()); return true; };
   for (;;) {
+    if (collectionsOnly) {
+      const enabled = ALL();
+      const browserOnline = await fetch(`http://127.0.0.1:${config.chromePort || 9333}/json/version`, { signal: AbortSignal.timeout(1500) }).then(r => r.ok).catch(() => false);
+      if (!browserOnline || !enabled.length || enabled.some(id => id !== 'wechat' && getMeta(`login:${id}`) !== 'ok')) {
+        daemonPhase('error', { error: '等待 Mac mini 专用 Chrome 和已开启平台的登录体检', nextRunAt: new Date(Date.now() + 5 * MIN).toISOString() });
+        await drv.sleep(5 * MIN);
+        continue;
+      }
+    }
     const token = acquireBrowser();
     if (!token) { daemonPhase('waiting', { nextRunAt: new Date(Date.now() + 5000).toISOString() }); await drv.sleep(5000); continue; }
     daemonPhase('working', { nextRunAt: undefined });
     try {
+      if (collectionsOnly) {
+        await scheduledSamples(every, MIN);
+        await scheduledTraffic(false);
+        await scheduledComments();
+      } else {
       if (!(await ensureNas()) && every('nasAlert', 60 * MIN)) await notify('⚠️ 麦田读不到 NAS，已尝试自动挂载但没成功');
       else if (every('scanPlans', 30 * MIN)) { const n = scanPlans(); if (n.length) await notify(`🗓 分发计划新增 ${n.length} 期\n${n.join('\n')}`); }
       for (const ep of episodes()) {
@@ -395,16 +443,13 @@ async function daemon() {
           if (!left.length && !getMeta(`done:${ep.id}`)) { setMeta(`done:${ep.id}`, 1); await notify(`🎉 ${ep.name}\n全部平台已发布\n${table(ep.id)}`); }
         }
       }
-      // 新发的一期头三天加密采样（每 6 小时一次），之后回到每天一次
-      for (const ep of episodes()) {
-        const pub = Date.parse(ep.schedule || ep.created_at); if (!(Date.now() > pub + 30 * MIN && Date.now() < pub + 72 * 3600e3)) continue;
-        if (!getTasks(ep.id).some(t => isPlatformEnabled(t.platform) && t.state === 'published') || !every(`sample:${ep.id}`, (config.sampleHours || 6) * 60 * MIN)) continue;
-        await collectMetrics(ep).catch((e) => console.error('加密采样出错：' + e.message));
-      }
+      await scheduledSamples(every, MIN);
       // 登录保活：定期打开一下后台首页（视频号的扫码登录过期快），掉线就提醒，并记下每次保持了多久
       for (const id of (config.keepAlive || []).filter(isPlatformEnabled)) {
         if (!every(`keep:${id}`, (config.keepAliveMinutes || 60) * MIN)) continue;
-        const ok = await drv.withTab(LOGIN_PAGES[id], async (tabId) => !/login|passport|signin/i.test((await chrome.tabs.get(tabId)).url) && !(await drv.evaluate(tabId, `/扫码登录/.test(document.body.innerText) && /验证码登录|密码登录/.test(document.body.innerText)`).catch(() => false)), { wait: 12000 }).catch(() => null);
+        const ok = id === 'wechat'
+          ? await checkWechatLogin().then(r => r.ok ? true : /未登录/.test(r.reason) ? false : null).catch(() => null)
+          : await drv.withTab(LOGIN_PAGES[id], async (tabId) => !/login|passport|signin/i.test((await chrome.tabs.get(tabId)).url) && !(await drv.evaluate(tabId, `/扫码登录/.test(document.body.innerText) && /验证码登录|密码登录/.test(document.body.innerText)`).catch(() => false)), { wait: 12000 }).catch(() => null);
         if (ok === null) continue;
         const was = getMeta(`login:${id}`);
         saveLogin(id, ok ? 'ok' : 'out', ok ? '' : '页面显示登录入口，请重新登录');
@@ -423,13 +468,7 @@ async function daemon() {
         if (pj.platforms.x && pj.platforms.x.mode === 'article+quote') { setMeta(`xart:${ep.id}`, Date.now()); startArticleJob(ep, pj); await notify(`🕕 ${ep.name}\nX：启动长文脚本，${new Date(sched).toLocaleTimeString('zh-CN', { hour12: false }).slice(0, 5)} 发长文，再发引用长文的视频帖`); }
       }
       // 每天上午 10 点后采一次流量（最近 30 天的期数）
-      if (new Date().getHours() >= 10 && getMeta('metricsDay') !== new Date().toLocaleDateString('zh-CN')) {
-        setMeta('metricsDay', new Date().toLocaleDateString('zh-CN'));
-        await metricsReport(episodes().filter(e => Date.now() - Date.parse(e.created_at) < 30 * 86400e3)).catch((e) => console.error('流量采集出错：' + e.message));
-        // 采完流量：到第 1/3/7 天的期出复盘卡片，周一出周报（每条只发一次）
-        try { const R = await import('./review.mjs'); for (const t of R.due((k) => { if (getMeta(k)) return false; setMeta(k, Date.now()); return true; })) await notify(t); }
-        catch (e) { console.error('复盘出错：' + e.message); }
-      }
+      await scheduledTraffic(true);
       // 发布前一晚 20 点后：第二天要发、还没开跑的期，先查一遍登录，掉线的今晚就扫码
       for (const ep of episodes()) {
         const sched = ep.schedule ? Date.parse(ep.schedule) : 0;
@@ -443,9 +482,7 @@ async function daemon() {
       // 每天上午体检一次，有平台掉线才通知
       const day = new Date().toLocaleDateString('zh-CN');
       if (new Date().getHours() >= 9 && getMeta('doctorDay') !== day) { setMeta('doctorDay', day); await doctor().catch((e) => console.error('体检出错：' + e.message)); }
-      const nextComments = commentsNextAt();
-      if (nextComments && Date.parse(nextComments) <= Date.now()) {
-        await collectComments(undefined, undefined, true).catch(e => console.error('评论采集出错：' + e.message));
+      await scheduledComments();
       }
       daemonPhase('waiting', { lastCycleAt: new Date().toISOString(), nextRunAt: new Date(Date.now() + 5 * MIN).toISOString() });
     } catch (e) { daemonPhase('error', { error: e.message, nextRunAt: new Date(Date.now() + 5 * MIN).toISOString() }); console.error('守护循环出错：' + e.message); }
@@ -483,7 +520,21 @@ try {
     await sync(getEpisode(ep.id)); console.log(table(ep.id));
   }
   else if (cmd === 'login') { const ids = loginPlatforms(); if (!ids.length) throw refuse('未开启任何平台'); await drv.openForLogin(ids.map(i => LOGIN_PAGES[i])); console.log(`专用 Chrome 已打开 ${ids.length} 个平台页面，登录完请重新检查登录状态`); }
-  else if (cmd === 'followers') { if (!enabledPlatforms().length) throw refuse('未开启任何平台'); await drv.ensure(); console.log(JSON.stringify(await collectFollowers(opt('--only') ? opt('--only').split(',') : null, opt('--skip') ? opt('--skip').split(',') : []), null, 1)); }
+  else if (cmd === 'followers') {
+    if (!enabledPlatforms().length) throw refuse('未开启任何平台');
+    await drv.ensure();
+    const only = opt('--only');
+    const result = await collectFollowers(only ? only.split(',') : null, opt('--skip') ? opt('--skip').split(',') : []);
+    if (only === 'wechat' && typeof result.wechat === 'string') throw refuse(result.wechat);
+    console.log(JSON.stringify(result, null, 1));
+  }
+  else if (cmd === 'wechat-draft') {
+    if (!isPlatformEnabled('wechat')) throw refuse('请先开启微信公众号');
+    const payload = process.env.MAITIAN_JOB_ID && db.prepare("SELECT payload FROM operation_jobs WHERE id=? AND type='wechat-draft' AND status='running'").get(process.env.MAITIAN_JOB_ID);
+    const draft = payload && wechatDraftInput(JSON.parse(payload.payload).draft);
+    if (!draft) throw refuse('请从系统页面提交公众号草稿');
+    try { console.log(await saveWechatDraft(draft)); } catch (e) { throw refuse(e.message); }
+  }
   else if (cmd === 'daemon') await daemon();
   else if (cmd === 'web') { const { startWeb } = await tsImport('./web.ts', import.meta.url); startWeb(); await new Promise(() => {}); }
   else if (cmd === 'status') {

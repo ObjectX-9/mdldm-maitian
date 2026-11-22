@@ -8,6 +8,7 @@ import { SITE } from './site.mjs';
 
 db.exec(`CREATE TABLE IF NOT EXISTS followers (day TEXT, platform TEXT, total INTEGER, gain INTEGER, loss INTEGER, source TEXT, collected_at TEXT, PRIMARY KEY (day, platform));`);
 const { isPlatformEnabled } = await tsImport('./platforms.ts', import.meta.url);
+const { collectWechatOverview } = await tsImport('./wechat.ts', import.meta.url);
 
 const dayOf = (d) => { const x = new Date(d); return `${x.getFullYear()}-${String(x.getMonth() + 1).padStart(2, '0')}-${String(x.getDate()).padStart(2, '0')}`; };
 export const today = () => dayOf(Date.now());
@@ -17,6 +18,7 @@ const SHADOW_TEXT = `(()=>{const R=document.querySelector('wujie-app')&&document
 
 // 每个采集器返回 { total, history: [{ day, total?, net?, gain?, loss? }] }；history 里只有 net 的，由 fill() 从今天的总数往回推
 export const followerCollectors = {
+  wechat: collectWechatOverview,
   async bilibili() {
     const r = await withTab('https://member.bilibili.com/platform/home', (t) => evaluate(t, `Promise.all([${get('/x/web/index/stat')},${get('/x/web/data/v2/overview/stat/graph?period=2&s_locale=zh_CN&type=fan')}]).then(([a,b])=>({total:a.data&&a.data.total_fans,inc:a.data&&a.data.incr_fans,tend:(b.data&&b.data.tendency)||[]}))`));
     return r && r.total != null && { total: r.total, todayNet: r.inc || 0, history: r.tend.map(x => ({ day: dayOf(x.date_key * 1000), net: x.total_inc })) };

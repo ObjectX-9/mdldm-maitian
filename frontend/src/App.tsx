@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { AppContext } from '@/context'
-import { getOverview, runAction, errorMessage } from '@/lib/api'
+import { getOverview, runAction, errorMessage, logout, passwordLoginEnabled } from '@/lib/api'
 import { Button } from '@/components/ui/button'
 import { Clock3, Folder, Monitor, Moon, RefreshCw, Settings2, ShieldCheck, Sun } from 'lucide-react'
 import { Empty } from '@/components/common'
@@ -79,6 +79,9 @@ export default function App() {
         <SelectControl className="workspace-theme-control" label="主题设置" value={preference} onValueChange={value=>changeTheme(value as ThemePreference)} triggerContent={<span className="workspace-theme-icon"><ThemeIcon size={16}/><span className="sr-only">{preference==='system'?'跟随系统':dark?'深色':'浅色'}</span></span>}><SelectOption value="light"><Sun className="mr-2 inline size-3.5"/>浅色</SelectOption><SelectOption value="dark"><Moon className="mr-2 inline size-3.5"/>深色</SelectOption><SelectOption value="system"><Monitor className="mr-2 inline size-3.5"/>跟随系统</SelectOption></SelectControl>
         <WorkspaceClock />
         {overview && <Button asChild variant="ghost" size="icon-sm" className="workspace-header-action workspace-header-settings"><a href="#/system" aria-label="系统设置"><Settings2/></a></Button>}
+        {passwordLoginEnabled && (isPublicResearch
+          ? <Button asChild variant="ghost" size="sm"><a href="/studio">登录工作室</a></Button>
+          : <Button variant="ghost" size="sm" onClick={() => void logout().then(() => location.replace('/')).catch(error => setMessage(errorMessage(error)))}>退出登录</Button>)}
       </div>
     </header>
     <div className="maitian-body">{!kiosk && <WorkspaceSidebar {...navigation} />}<div className="maitian-workspace"><div className={cn('maitian-content', isTopics && 'has-topics', page === 'board' && 'has-board')}>

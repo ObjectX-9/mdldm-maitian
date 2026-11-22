@@ -4,9 +4,13 @@ import type { ServiceMonitorData, ServiceTrafficData, ServiceTrafficRange } from
 import type { RepositorySkill, SkillFileEntry, SkillFilePreview } from '../../../shared/skills'
 
 const client = axios.create({ baseURL: '/api', timeout: 20_000, withCredentials: true })
+export const passwordLoginEnabled = document.documentElement.hasAttribute('data-password-login')
 client.interceptors.response.use(response => response, (error: unknown) => {
   if (axios.isAxiosError(error)) {
-    if (error.response?.status === 401) {
+    if (error.response?.status === 401 && passwordLoginEnabled && location.pathname !== '/login') {
+      location.assign('/login' + location.hash)
+    }
+    if (error.response?.status === 401 && !passwordLoginEnabled) {
       return Promise.reject(new Error('登录已过期，请使用带口令的地址重新打开肥特自媒体工作室，或前往 /login 登录。'))
     }
     const body: unknown = error.response?.data
@@ -23,8 +27,12 @@ export const errorMessage = (error: unknown) => error instanceof Error ? error.m
 
 export const sendLoginCode = () => client.post<{ ok: boolean }>('/login/send', undefined, { baseURL: '/' }).then(r => r.data)
 export const verifyLoginCode = (code: string) => client.post<{ ok: boolean }>('/login/verify', { code }, { baseURL: '/' }).then(r => r.data)
+export const loginWithPassword = (username: string, password: string, remember: boolean) =>
+  client.post<{ ok: boolean }>('/login/password', { username, password, remember }, { baseURL: '/' }).then(r => r.data)
+export const logout = () => client.post<{ ok: boolean }>('/login/logout', {}, { baseURL: '/' }).then(r => r.data)
 
 export const savePlatforms = (platforms: Platform[]) => client.put<{ enabledPlatforms: Platform[] }>('/platforms', { platforms }).then(r => r.data)
+export const getWechatLoginQr = () => client.post<{ loggedIn: boolean; image?: string }>('/wechat/login-qr', {}, { timeout: 40_000 }).then(r => r.data)
 
 export const getJobs = (signal?: AbortSignal) => client.get<import('@/types').JobCenter>('/jobs', { signal }).then(r => r.data)
 export const getJobOutput = (id: string, signal?: AbortSignal) => client.get<{ output: string }>(`/jobs/${encodeURIComponent(id)}/output`, { signal }).then(r => r.data)

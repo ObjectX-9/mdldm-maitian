@@ -113,4 +113,17 @@ export async function adoptTargets(re) {
     return id;
   });
 }
+export async function openedTab(openerId, origin) {
+  await connect();
+  const opener = tabOf(openerId).targetId;
+  const { targetInfos } = await raw('Target.getTargets');
+  const target = targetInfos.find(t => t.type === 'page' && t.openerId === opener && t.url.startsWith(origin + '/'));
+  if (!target) return null;
+  if (!byTarget.has(target.targetId)) {
+    const id = nextTab++;
+    tabs.set(id, { targetId: target.targetId });
+    byTarget.set(target.targetId, id);
+  }
+  return byTarget.get(target.targetId);
+}
 export function closeConnection() { if (ws) { ws.onclose = null; ws.close(); ws = null; } }

@@ -1,4 +1,4 @@
-export type Platform = 'bilibili' | 'douyin' | 'xhs' | 'channels' | 'youtube' | 'x' | 'instagram' | 'zsz'
+export type Platform = 'bilibili' | 'douyin' | 'xhs' | 'channels' | 'wechat' | 'youtube' | 'x' | 'instagram' | 'zsz'
 export type LoginStatus = 'ok' | 'out' | 'error' | 'unknown'
 export interface Metrics {
   day?: string; views: number | null; likes: number | null; comments: number | null
@@ -24,8 +24,8 @@ export interface EpisodeDetail extends Episode {
 }
 export interface SiteStats { reg: number; vip: number; orders: number; revenue: number }
 export interface Action {
-  type: 'sync' | 'metrics' | 'doctor' | 'board' | 'followers' | 'mark' | 'login' | 'retry' | 'comments'
-  id?: string; platform?: Platform; state?: string; note?: string; url?: string
+  type: 'sync' | 'metrics' | 'doctor' | 'board' | 'followers' | 'mark' | 'login' | 'retry' | 'comments' | 'wechat-draft'
+  id?: string; platform?: Platform; state?: string; note?: string; url?: string; draft?: { title: string; body: string }
 }
 export interface ActionRecord {
   type: Action['type']; label: string; startedAt: string; done: boolean; ok: boolean | null; tail: string
@@ -40,6 +40,7 @@ export interface Overview {
     campaigns: (SiteStats & { campaign: string; sources: string })[]; campaignsOn: boolean
   }
   followers: { day: string; platform: Platform; total: number | null; gain: number | null; loss: number | null }[]
+  wechatReading?: { day: string; readers: number }[]
   samples: { ts: string; episode_id: string; platform: Platform; views: number | null }[]
   feed: { ts: string; nick: string; platform: string; action: string; result: string }[]
   health: {

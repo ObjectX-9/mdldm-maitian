@@ -1,7 +1,7 @@
 import type { Episode, Metrics, Overview, Platform } from '@/types'
-export const platforms: Platform[] = ['bilibili', 'douyin', 'xhs', 'channels', 'youtube', 'x', 'instagram', 'zsz']
-export const names: Record<Platform, string> = { bilibili: 'B站', douyin: '抖音', xhs: '小红书', channels: '视频号', youtube: 'YouTube', x: 'X', instagram: 'Instagram', zsz: '知识站' }
-export const colors: Record<Platform, string> = { bilibili: '#00a1d6', douyin: '#18181b', xhs: '#ff2442', channels: '#fa9d3b', youtube: '#ff0033', x: '#18181b', instagram: '#d6246e', zsz: '#5e5ce6' }
+export const platforms: Platform[] = ['bilibili', 'douyin', 'xhs', 'channels', 'wechat', 'youtube', 'x', 'instagram', 'zsz']
+export const names: Record<Platform, string> = { bilibili: 'B站', douyin: '抖音', xhs: '小红书', channels: '视频号', wechat: '微信公众号', youtube: 'YouTube', x: 'X', instagram: 'Instagram', zsz: '知识站' }
+export const colors: Record<Platform, string> = { bilibili: '#00a1d6', douyin: '#18181b', xhs: '#ff2442', channels: '#fa9d3b', wechat: '#07964f', youtube: '#ff0033', x: '#18181b', instagram: '#d6246e', zsz: '#5e5ce6' }
 export const fmt = (n: number | null | undefined) => n == null ? '–' : Math.round(n).toLocaleString('en-US')
 export const pct = (a: number, b: number, digits = 1) => b ? `${(a / b * 100).toFixed(digits)}%` : '–'
 export const signed = (n: number | null) => n == null ? '–' : `${n > 0 ? '+' : ''}${fmt(n)}`

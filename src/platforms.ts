@@ -13,7 +13,8 @@ export function availablePlatforms(): string[] {
 export function enabledPlatforms(): string[] {
   try { selected = JSON.parse(fs.readFileSync(configPath, 'utf8')).enabledPlatforms; } catch { /* 保留上一次配置 */ }
   const available = availablePlatforms();
-  return Array.isArray(selected) ? available.filter(p => selected!.includes(p)) : available;
+  const configured = selected;
+  return Array.isArray(configured) ? available.filter(p => configured.includes(p)) : available.filter(p => p !== 'wechat');
 }
 export const isPlatformEnabled = (platform: string): boolean => enabledPlatforms().includes(platform);
 export function saveEnabledPlatforms(value: unknown): string[] {

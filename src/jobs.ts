@@ -8,6 +8,7 @@ import { commentAdapters } from './comment-adapters.ts';
 import { enabledPlatforms, isPlatformEnabled } from './platforms.ts';
 import { acquireBrowser, attachBrowserChild, releaseBrowser, processAlive } from './browser-lock.ts';
 import type { ActionInput } from './server-types.ts';
+import { wechatDraftInput } from './wechat.ts';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 export type JobStatus = 'queued' | 'running' | 'succeeded' | 'failed' | 'cancelled' | 'interrupted';
@@ -26,18 +27,22 @@ db.exec(`CREATE TABLE IF NOT EXISTS operation_jobs (
 const fail = (message: string, status = 400): never => { throw Object.assign(new Error(message), { status }); };
 const job = (id: string) => db.prepare('SELECT * FROM operation_jobs WHERE id=?').get(id) as unknown as JobRow | undefined;
 const now = () => new Date().toISOString();
-const labels: Record<string, string> = { comments: '采集评论', login: '打开登录页面', sync: '取链接', metrics: '采集流量', doctor: '登录体检', board: '同步站点', followers: '采集粉丝', mark: '标记发布', retry: '继续发布' };
+const labels: Record<string, string> = { comments: '采集评论', login: '打开登录页面', sync: '取链接', metrics: '采集流量', doctor: '登录体检', board: '同步站点', followers: '采集粉丝', mark: '标记发布', retry: '继续发布', 'wechat-draft': '保存公众号草稿' };
 function command(input: ActionInput): { argv: string[]; label: string } {
   if (!input || typeof input !== 'object' || typeof input.type !== 'string' || !labels[input.type]) return fail('不支持的操作');
   for (const key of ['id', 'platform', 'state', 'note', 'url'] as const) if (input[key] !== undefined && typeof input[key] !== 'string') return fail('请求格式不对');
   if (!enabledPlatforms().length) return fail('请先开启需要使用的平台');
   if (input.platform && !isPlatformEnabled(input.platform)) return fail('该平台未开启');
+  if (input.platform === 'wechat' && !['login', 'doctor', 'followers', 'wechat-draft'].includes(input.type)) return fail('请使用系统页面的微信公众号操作');
   const ep = input.id ? getEpisode(input.id) : undefined;
   if (input.id && !ep) return fail('没有这一期');
   const only = input.platform ? ['--only', input.platform] : [];
   let argv: string[];
   switch (input.type) {
     case 'login': case 'doctor': case 'followers': argv = [input.type, ...only]; break;
+    case 'wechat-draft':
+      if (input.platform !== 'wechat' || !wechatDraftInput(input.draft)) return fail('请填写有效的公众号标题和正文', 422);
+      argv = ['wechat-draft']; break;
     case 'comments':
       if (!Object.keys(commentAdapters).some(isPlatformEnabled)) return fail('已开启的平台暂未接入自动采集');
       if (input.platform && !commentAdapters[input.platform]) return fail('该平台暂不支持自动采集');

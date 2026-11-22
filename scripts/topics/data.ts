@@ -1,4 +1,5 @@
 import fs from 'node:fs/promises';
+import { constants } from 'node:fs';
 import path from 'node:path';
 import { dataDir, setup, getConfig, getRuns, saveRun, writeJson, requests } from '../../src/topics/store.ts';
 import { runSchema, type Run } from '../../shared/topics.ts';
@@ -17,6 +18,24 @@ if(command === 'init') {
   if(!arg) throw new Error('用法：pnpm collect:import /absolute/path/to/run.json');
   const run=await saveRun(JSON.parse(await fs.readFile(path.resolve(arg),'utf8')));
   console.log(JSON.stringify({id:run.id,candidates:run.items.length,selected:run.selectedIds.length}));
+} else if(command === 'sync-finalized') {
+  if (!arg || !/^[a-zA-Z0-9_-]+$/.test(arg) || !trackArg) throw new Error('用法：sync-finalized <runId> <原研究数据目录>');
+  const source = path.resolve(trackArg);
+  const run = runSchema.parse(JSON.parse(await fs.readFile(path.join(source, 'runs', `${arg}.json`), 'utf8')));
+  if (run.id !== arg || !run.finishedAt || !['complete', 'partial', 'blocked'].includes(run.status)) throw new Error('只能同步已收尾的研究批次');
+  const assetRoot = await fs.realpath(path.join(source, 'assets'));
+  for (const relative of new Set(run.items.flatMap(item => item.frames.map(frame => frame.path)))) {
+    const asset = await fs.realpath(path.resolve(source, relative));
+    const target = path.resolve(dataDir, relative);
+    if (!asset.startsWith(assetRoot + path.sep) || !target.startsWith(path.join(dataDir, 'assets') + path.sep)) throw new Error('截帧路径越界');
+    await fs.mkdir(path.dirname(target), { recursive: true });
+    try { await fs.copyFile(asset, target, constants.COPYFILE_EXCL); }
+    catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== 'EEXIST' || !(await fs.readFile(asset)).equals(await fs.readFile(target))) throw error;
+    }
+  }
+  const saved = await saveRun(run);
+  console.log(JSON.stringify({ id: saved.id, status: saved.status, selected: saved.selectedIds.length }));
 } else if(command === 'finalize') {
   if(!arg) throw new Error('用法：pnpm collect:finalize <runId>');
   const run=(await getRuns()).find(r=>r.id===arg); if(!run) throw new Error('未找到批次');
