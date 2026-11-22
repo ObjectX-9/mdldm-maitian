@@ -5,6 +5,7 @@ export type Send = (res: Response, code: number, body: unknown, type?: string, e
 export interface WebConfig {
   port: number; key: string; login?: string; widgetToken?: string; owner?: string; avatar?: string;
   access?: { team: string; aud: string; emails?: string[] };
+  publicResearch?: boolean; proxyKey?: string;
 }
 export interface RuntimeConfig {
   enabledPlatforms?: string[]; name?: string; web?: WebConfig; chromePort?: number; rootPath: string; driver?: string;

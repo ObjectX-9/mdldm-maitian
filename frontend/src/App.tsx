@@ -18,14 +18,17 @@ import { Skills } from '@/pages/Skills'
 import { SystemPage } from '@/pages/System'
 import type { Action, Overview } from '@/types'
 import { Topics, type TopicView } from '@/topics/Topics'
-import { WorkspaceMobileNav, WorkspaceSidebar } from '@/components/WorkspaceNav'
+import { isResearchRoute, WorkspaceMobileNav, WorkspaceSidebar } from '@/components/WorkspaceNav'
 import { SelectControl, SelectOption } from '@/components/ui/select'
 import { useTheme, type ThemePreference } from '@/lib/theme'
 
 const isLoginPage = location.pathname === '/login'
+const isPublicResearch = document.documentElement.hasAttribute('data-public-research')
+const studioPath = isPublicResearch ? '/studio' : undefined
 
 function route() {
   const hash = location.hash.slice(2)
+  if (isPublicResearch) return isResearchRoute(hash) ? hash : 'topics/overview'
   return hash || (location.pathname === '/p' ? 'traffic' : 'board')
 }
 function WorkspaceClock() {
@@ -48,8 +51,8 @@ export default function App() {
   }, [])
   const cancelRefresh = useCallback(() => { sequence.current++; controller.current?.abort() }, [])
   const busy = submitting || !!overview?.actions.some(a => !a.done)
-  useEffect(() => { if (isLoginPage) return; void refresh(); return cancelRefresh }, [refresh, cancelRefresh])
-  useEffect(() => { if (isLoginPage) return; const id = setInterval(() => { if (!document.hidden || busy) void refresh() }, busy ? 4000 : 60_000); return () => clearInterval(id) }, [refresh, busy])
+  useEffect(() => { if (isLoginPage || isPublicResearch) return; void refresh(); return cancelRefresh }, [refresh, cancelRefresh])
+  useEffect(() => { if (isLoginPage || isPublicResearch) return; const id = setInterval(() => { if (!document.hidden || busy) void refresh() }, busy ? 4000 : 60_000); return () => clearInterval(id) }, [refresh, busy])
   useEffect(() => { const onHash = () => { const next = route(); setPage(next); document.querySelector('.maitian-workspace')?.scrollTo(0, 0) }; window.addEventListener('hashchange', onHash); return () => window.removeEventListener('hashchange', onHash) }, [])
   useEffect(() => { if (!message) return; const id = setTimeout(() => setMessage(''), 5000); return () => clearTimeout(id) }, [message])
   const run = async (action: Action) => {
@@ -61,24 +64,28 @@ export default function App() {
   }
   const kiosk = new URLSearchParams(location.search).has('kiosk')
   if (isLoginPage) return <LoginPage />
-  if (!overview) return <main className="mx-auto max-w-lg p-10 text-center"><Empty>{error || '加载肥特自媒体工作室…'}</Empty><Button onClick={() => void refresh()}>重新加载</Button></main>
-  const login = Object.values(overview.health.login), loginOk = login.length > 0 && login.every(s => s === 'ok'), active = page.startsWith('ep/') ? 'archive' : page
+  if (!overview && !isPublicResearch) return <main className="mx-auto max-w-lg p-10 text-center"><Empty>{error || '加载肥特自媒体工作室…'}</Empty><Button onClick={() => void refresh()}>重新加载</Button></main>
+  const login = Object.values(overview?.health.login ?? {}), loginOk = login.length > 0 && login.every(s => s === 'ok'), active = page.startsWith('ep/') ? 'archive' : page
   const topicView = page.slice('topics/'.length)
-  const isTopics = page.startsWith('topics/') && ['overview', 'library', 'needs', 'apps', 'runs', 'timeline', 'settings'].includes(topicView)
-  return <AppContext.Provider value={{ overview, busy, run, refresh }}><div className={cn('maitian-shell', kiosk && 'is-kiosk cursor-none')}>
-    <header className="maitian-header">{!kiosk && <WorkspaceMobileNav active={active} siteOn={overview.siteOn} />}<a href="#/board" className="maitian-brand"><img className="maitian-brand-mark" src="/static/site-icon.png" alt=""/><span>肥特自媒体工作室</span></a>
+  const isTopics = isResearchRoute(page)
+  const navigation = { active, siteOn: overview?.siteOn ?? false, studioPath }
+  const workspace = <div className={cn('maitian-shell', kiosk && 'is-kiosk cursor-none')}>
+    <header className="maitian-header">{!kiosk && <WorkspaceMobileNav {...navigation} />}<a href={isPublicResearch ? '#/topics/overview' : '#/board'} className="maitian-brand"><img className="maitian-brand-mark" src="/static/site-icon.png" alt=""/><span>肥特自媒体工作室</span></a>
       <div className="workspace-header-tools">
+        {overview && <>
         <div className="maitian-health" aria-label="工作台状态"><span className="workspace-health-item" data-state={overview.health.nas?'ok':'warning'}><Folder size={14}/><span>目录{overview.health.nas?'可读':'不可读'}</span><i aria-hidden="true"/></span><span className="workspace-health-item" data-state={overview.health.chrome?'ok':'warning'}><Monitor size={14}/><span>浏览器{overview.health.chrome?'在线':'未启动'}</span><i aria-hidden="true"/></span><a href="#/system" className="workspace-health-item" data-state={loginOk?'ok':'warning'}><ShieldCheck size={14}/><span>登录{!overview.enabledPlatforms.length?'未开启':loginOk?'正常':login.includes('out')?'有异常':'待检查'}</span><i aria-hidden="true"/></a></div>
         <Button variant="ghost" size="icon-sm" className="workspace-header-action" aria-label="刷新工作台数据" onClick={()=>void refresh()}><RefreshCw/></Button>
+        </>}
         <SelectControl className="workspace-theme-control" label="主题设置" value={preference} onValueChange={value=>changeTheme(value as ThemePreference)} triggerContent={<span className="workspace-theme-icon"><ThemeIcon size={16}/><span className="sr-only">{preference==='system'?'跟随系统':dark?'深色':'浅色'}</span></span>}><SelectOption value="light"><Sun className="mr-2 inline size-3.5"/>浅色</SelectOption><SelectOption value="dark"><Moon className="mr-2 inline size-3.5"/>深色</SelectOption><SelectOption value="system"><Monitor className="mr-2 inline size-3.5"/>跟随系统</SelectOption></SelectControl>
         <WorkspaceClock />
-        <Button asChild variant="ghost" size="icon-sm" className="workspace-header-action workspace-header-settings"><a href="#/system" aria-label="系统设置"><Settings2/></a></Button>
+        {overview && <Button asChild variant="ghost" size="icon-sm" className="workspace-header-action workspace-header-settings"><a href="#/system" aria-label="系统设置"><Settings2/></a></Button>}
       </div>
     </header>
-    <div className="maitian-body">{!kiosk && <WorkspaceSidebar active={active} siteOn={overview.siteOn} />}<div className="maitian-workspace"><div className={cn('maitian-content', isTopics && 'has-topics', page === 'board' && 'has-board')}>
+    <div className="maitian-body">{!kiosk && <WorkspaceSidebar {...navigation} />}<div className="maitian-workspace"><div className={cn('maitian-content', isTopics && 'has-topics', page === 'board' && 'has-board')}>
     {error && <div role="alert" className="mb-4 rounded-lg border border-destructive/30 bg-red-50 p-3 text-sm text-destructive">{error} <Button variant="link" size="sm" onClick={() => void refresh()}>重试</Button></div>}
-    <main>{isTopics ? <Topics view={topicView as TopicView} /> : page === 'board' ? <Dashboard /> : page === 'traffic' ? <Traffic /> : page === 'calendar' ? <Calendar /> : page === 'convert' && overview.siteOn ? <Conversion /> : page === 'archive' ? <Archive /> : page.startsWith('ep/') ? <EpisodePage id={decodeURIComponent(page.slice(3))} /> : page === 'tasks' ? <TaskCenter /> : page === 'feedback' ? <Feedback /> : page === 'topics/workbench' ? <TopicWorkbench /> : page === 'runtime' ? <Runtime /> : page === 'services' ? <Services /> : page === 'skills' ? <Skills /> : page === 'system' ? <SystemPage /> : <Empty>页面不存在</Empty>}</main>
+    <main>{isTopics ? <Topics view={topicView as TopicView} /> : page === 'board' ? <Dashboard /> : page === 'traffic' ? <Traffic /> : page === 'calendar' ? <Calendar /> : page === 'convert' && overview?.siteOn ? <Conversion /> : page === 'archive' ? <Archive /> : page.startsWith('ep/') ? <EpisodePage id={decodeURIComponent(page.slice(3))} /> : page === 'tasks' ? <TaskCenter /> : page === 'feedback' ? <Feedback /> : page === 'topics/workbench' ? <TopicWorkbench /> : page === 'runtime' ? <Runtime /> : page === 'services' ? <Services /> : page === 'skills' ? <Skills /> : page === 'system' ? <SystemPage /> : <Empty>页面不存在</Empty>}</main>
     </div></div></div>
     {message && <div role="status" aria-live="polite" className="fixed bottom-6 left-1/2 z-50 w-max max-w-[90vw] -translate-x-1/2 rounded-xl bg-foreground px-5 py-3 text-sm text-background shadow-lg">{message}</div>}
-  </div></AppContext.Provider>
+  </div>
+  return overview ? <AppContext.Provider value={{ overview, busy, run, refresh }}>{workspace}</AppContext.Provider> : workspace
 }

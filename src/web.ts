@@ -124,6 +124,15 @@ function isViteAsset(pathname: string) {
 
 async function authorize(req: Request, res: Response, next: NextFunction) {
   const u = new URL(req.originalUrl, 'http://x');
+  if (W.publicResearch) {
+    const read = req.method === 'GET' || req.method === 'HEAD';
+    const publicRead = read && (['/', '/manifest.webmanifest', '/static/site-icon.png', '/api/topics/bootstrap'].includes(u.pathname)
+      || /^\/static\/icon-\d+\.png$/.test(u.pathname)
+      || u.pathname.startsWith('/assets/') || u.pathname.startsWith('/api/topics/assets/'));
+    if (!publicRead && (!W.proxyKey || !tokenEq(req.get('x-maitian-proxy-key'), W.proxyKey))) {
+      return send(res, 401, { error: '需要登录' });
+    }
+  }
   // 访问控制：前面挂了 Cloudflare Access（邮箱验证码）就认它的登录凭证；否则用口令（第一次带 ?key= 进来，之后用 cookie）
   if (/^\/static\/icon-\d+\.png$/.test(u.pathname)) return send(res, 200, fs.readFileSync(path.join(DIR, 'web', path.basename(u.pathname))), 'image/png', { 'cache-control': 'max-age=86400' });   // 主屏幕图标不用登录
   if (u.pathname === '/api/widget/img') {   // 小组件图片：头像（config.web.avatar）或最新一期封面缩略图，同一个只读口令
@@ -142,7 +151,7 @@ async function authorize(req: Request, res: Response, next: NextFunction) {
   if (LOGIN && await handleLogin(req, res, u, send)) return;
   const publicFrontend = LOGIN && req.method === 'GET' && (u.pathname === '/login' || u.pathname.startsWith('/assets/') || (vite && isViteAsset(u.pathname)));
   const cookieKey = ((req.headers.cookie || '').match(/mt_key=([^;]+)/) || [])[1];
-  if (!publicFrontend && W.key && cookieKey !== W.key && !(LOGIN && sessionOk(req)) && !(await accessEmail(req, W.access))) {
+  if (!W.publicResearch && !publicFrontend && W.key && cookieKey !== W.key && !(LOGIN && sessionOk(req)) && !(await accessEmail(req, W.access))) {
     if (u.searchParams.get('key') === W.key) return send(res, 302, '', 'text/plain', { 'set-cookie': `mt_key=${W.key}; Path=/; Max-Age=31536000; HttpOnly; SameSite=Lax`, location: '/' });
     if (LOGIN) return u.pathname.startsWith('/api/') ? send(res, 401, { error: '需要登录' }) : send(res, 302, '', 'text/plain', { location: '/login' });
     return send(res, 401, '<meta charset="utf-8"><body style="font:16px system-ui;padding:40px">需要访问口令。请用带 <code>?key=…</code> 的地址打开一次。</body>', 'text/html; charset=utf-8');
@@ -164,12 +173,15 @@ function createWebApp() {
   const staticOptions = { index: false as const, setHeaders: (res: http.ServerResponse) => { res.setHeader('Cache-Control', 'no-store'); } };
   app.use('/static', express.static(path.join(DIR, 'web'), staticOptions));
   app.use('/assets', express.static(path.join(DIST, 'assets'), staticOptions));
-  app.get(['/', '/p', '/board', '/login'], async (req, res) => {
+  app.get(['/', '/p', '/board', '/login', ...(W.publicResearch ? ['/studio'] : [])], async (req, res) => {
     const u = new URL(req.originalUrl, 'http://x');
     if (u.pathname === '/login' && !LOGIN) return send(res, 404, { error: 'not found' });
     const f = path.join(vite ? ROOT + '/frontend' : DIST, 'index.html');
     if (!fs.existsSync(f)) return send(res, 503, '<meta charset="utf-8">请先执行 pnpm build，开发时使用 pnpm dev。', 'text/html; charset=utf-8');
-    const html = fs.readFileSync(f, 'utf8');
+    const index = fs.readFileSync(f, 'utf8');
+    const html = W.publicResearch && u.pathname === '/'
+      ? index.replace('<html lang="zh-CN">', '<html lang="zh-CN" data-public-research>')
+      : index;
     return send(res, 200, vite ? await vite.transformIndexHtml(u.pathname, html) : html, 'text/html; charset=utf-8');
     });
   app.get('/widget', async (req, res) => {
@@ -235,7 +247,7 @@ export function startWeb() {
       vite = await createServer({ configFile: path.join(ROOT, 'vite.config.ts'), server: { middlewareMode: true, hmr: { server: srv } }, appType: 'custom' });
       srv.on('close', () => { void vite?.close(); });
     }
-    srv.listen(W.port, '0.0.0.0', () => {
+    srv.listen(W.port, W.publicResearch ? '127.0.0.1' : '0.0.0.0', () => {
       const stopTrafficCollector = startServiceTrafficCollector();
       if (stopTrafficCollector) srv.once('close', stopTrafficCollector);
       console.log(`肥特自媒体工作室网页：http://localhost:${W.port}/?key=${W.key}`);
