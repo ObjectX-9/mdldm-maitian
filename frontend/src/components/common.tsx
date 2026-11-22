@@ -26,8 +26,8 @@ export function Stat({ label, value, note }: { label: string; value: ReactNode; 
 export function Stats({ children }: { children: ReactNode }) { return <div className="studio-stats grid grid-cols-2 gap-4 xl:grid-cols-4">{children}</div> }
 export function Empty({ children = '还没有数据' }: { children?: ReactNode }) { return <div className="grid min-h-32 place-items-center p-6 text-center text-sm text-muted-foreground">{children}</div> }
 export function PlatformIcon({ platform, siteLogo }: { platform: Platform; siteLogo?: boolean }) {
-  const l: { bg: string; d?: string; stroke?: string } = logos[platform]
-  return <span className="inline-flex size-6 shrink-0 items-center justify-center overflow-hidden rounded-md align-middle" style={{ background: l.bg }}>{platform === 'zsz' && siteLogo ? <img className="size-full object-cover" src="/site-logo" alt="" /> : <svg aria-hidden="true" viewBox="0 0 24 24" className="size-4"><path d={l.d || l.stroke} fill={l.stroke ? 'none' : 'white'} stroke={l.stroke ? 'white' : undefined} strokeWidth={2} strokeLinejoin="round" /></svg>}</span>
+  const l: { bg: string; d?: string; stroke?: string; viewBox?: string } = logos[platform]
+  return <span className="inline-flex size-6 shrink-0 items-center justify-center overflow-hidden rounded-md align-middle" style={{ background: l.bg }}>{platform === 'zsz' && siteLogo ? <img className="size-full object-cover" src="/site-logo" alt="" /> : <svg aria-hidden="true" viewBox={l.viewBox ?? '0 0 24 24'} className="size-4"><path d={l.d || l.stroke} fill={l.stroke ? 'none' : 'white'} stroke={l.stroke ? 'white' : undefined} strokeWidth={2} strokeLinejoin="round" /></svg>}</span>
 }
 export function PlatformLabel({ platform, name }: { platform: Platform; name?: string }) { return <span className="inline-flex items-center gap-2"><PlatformIcon platform={platform} />{name || names[platform]}</span> }
 export function Status({ task }: { task: Task }) {
