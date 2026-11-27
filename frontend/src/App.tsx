@@ -229,7 +229,7 @@ export default function App() {
         {status && <Button asChild variant="ghost" size="icon-sm" className="workspace-header-action workspace-header-settings"><a href="#/system" aria-label="系统设置"><Settings2/></a></Button>}
         {passwordLoginEnabled && (isPublicResearch
           ? <Button asChild variant="ghost" size="sm"><a href="/studio">登录工作室</a></Button>
-          : <Button variant="ghost" size="sm" onClick={() => void logout().then(() => location.replace('/')).catch(error => setMessage(errorMessage(error)))}>退出登录</Button>)}
+          : <Button variant="ghost" size="sm" onClick={() => void logout().then(() => location.replace('/research')).catch(error => setMessage(errorMessage(error)))}>退出登录</Button>)}
       </div>
     </header>
     <div className="maitian-body">{!kiosk && <WorkspaceSidebar {...navigation} />}<div className="maitian-workspace"><div className={cn('maitian-content', isTopics && 'has-topics', page === 'board' && 'has-board')}>

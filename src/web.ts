@@ -595,7 +595,8 @@ async function authorize(req: Request, res: Response, next: NextFunction) {
   const u = new URL(req.originalUrl, 'http://x');
   if (W.publicResearch) {
     const read = req.method === 'GET' || req.method === 'HEAD';
-    const publicRead = read && (['/', '/manifest.webmanifest', '/static/site-icon.png', '/api/topics/bootstrap'].includes(u.pathname)
+    const publicRead = read && ((!PASSWORD_LOGIN && u.pathname === '/')
+      || ['/research', '/manifest.webmanifest', '/static/site-icon.png', '/api/topics/bootstrap'].includes(u.pathname)
       || /^\/static\/icon-\d+\.png$/.test(u.pathname)
       || u.pathname.startsWith('/assets/') || u.pathname.startsWith('/api/topics/assets/'));
     const trustedProxy = !!W.proxyKey && tokenEq(req.get('x-maitian-proxy-key'), W.proxyKey);
@@ -681,12 +682,12 @@ function createWebApp() {
       res.setHeader('Cache-Control', !vite && hashed ? immutableAssetCache : 'no-store');
     },
   }));
-  app.get(['/', '/p', '/board', '/login', ...(W.publicResearch ? ['/studio'] : [])], async (req, res) => {
+  app.get(['/', '/p', '/board', '/login', ...(W.publicResearch ? ['/studio', '/research'] : [])], async (req, res) => {
     const u = new URL(req.originalUrl, 'http://x');
     if (u.pathname === '/login' && !LOGIN && !PASSWORD_LOGIN) return send(res, 404, { error: 'not found' });
     const index = await readIndexHtml();
     if (index === null) return send(res, 503, '<meta charset="utf-8">请先执行 pnpm build，开发时使用 pnpm dev。', 'text/html; charset=utf-8');
-    const researchEntry = W.publicResearch && u.pathname === '/';
+    const researchEntry = W.publicResearch && (u.pathname === '/research' || (!PASSWORD_LOGIN && u.pathname === '/'));
     const html = index.replace('<html lang="zh-CN">', `<html lang="zh-CN"${researchEntry ? ' data-public-research' : ''}${PASSWORD_LOGIN ? ' data-password-login' : ''}>`);
     return send(res, 200, vite ? await vite.transformIndexHtml(u.pathname, html) : html, 'text/html; charset=utf-8');
     });

@@ -22,7 +22,7 @@ function PasswordLogin() {
     setMessage('')
     try {
       await loginWithPassword(String(fields.get('username')), String(fields.get('password')), fields.has('remember'))
-      location.replace('/studio' + location.hash)
+      location.replace('/' + location.hash)
     } catch (error) {
       setMessage(errorMessage(error))
       setBusy(false)
@@ -58,7 +58,7 @@ function PasswordLogin() {
           <Button className="h-12 w-full font-medium" disabled={busy} type="submit">{busy ? '正在登录…' : '登录'}</Button>
         </form>
       </section>
-      <a href="/" className="mx-auto mt-4 flex min-h-11 w-fit items-center gap-2 rounded-md px-3 text-sm text-muted-foreground underline-offset-4 hover:text-foreground hover:underline focus-visible:outline-2 focus-visible:outline-ring">
+      <a href="/research" className="mx-auto mt-4 flex min-h-11 w-fit items-center gap-2 rounded-md px-3 text-sm text-muted-foreground underline-offset-4 hover:text-foreground hover:underline focus-visible:outline-2 focus-visible:outline-ring">
         浏览健身热点研究 <ArrowRight size={15} aria-hidden="true" />
       </a>
     </div>
