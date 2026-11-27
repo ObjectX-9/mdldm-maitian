@@ -158,7 +158,7 @@ export function createServiceMonitor(input: unknown, webPort: number, hostname?:
       : invalid.length ? `config.json 的 services 中，第 ${invalid.join('、')} 项格式无效。` : undefined;
   if (!remote && !services.some(service => service.port === webPort)) {
     const url = serviceSchema.shape.url.safeParse(hostname ? `https://${hostname}` : undefined);
-    services.unshift({ name: '麦田工作台', port: webPort, url: url.success ? url.data : undefined });
+    services.unshift({ name: '肥特自媒体工作室', port: webPort, url: url.success ? url.data : undefined });
   }
 
   let latest: ServiceMonitorData | undefined;
@@ -183,18 +183,20 @@ export function createServiceMonitor(input: unknown, webPort: number, hostname?:
     return { results, probeError };
   };
   const collect = async (): Promise<ServiceMonitorData> => {
+    const urls = [...new Set(services.flatMap(({ url }) => url ? [url] : []))];
     const [{ results, probeError }, domainProbes] = await Promise.all([
       collectLocal(),
-      Promise.all(services.map(async ({ url }) => {
-        if (!url) return undefined;
+      Promise.all(urls.map(async url => {
         const start = performance.now();
         const result = await checkHttp(new URL(url));
-        return 'failure' in result
+        const measurement = 'failure' in result
           ? { domainFailure: result.failure }
           : { domainLatencyMs: Math.round(performance.now() - start) };
+        return [url, measurement] as const;
       })),
     ]);
-    const checks = results.map((result, index) => ({ ...result, ...domainProbes[index] }));
+    const domainByUrl = new Map(domainProbes);
+    const checks = results.map(result => ({ ...result, ...(result.url ? domainByUrl.get(result.url) : undefined) }));
     return { services: checks, remote, checkedAt: new Date().toISOString(), configWarning, probeError };
   };
   return () => {

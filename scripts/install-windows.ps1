@@ -13,7 +13,7 @@ function Ok($t)  { Write-Host "  OK $t" }
 function Tip($t) { Write-Host "  · $t" -ForegroundColor Yellow }
 function Refresh-Path { $env:Path = [System.Environment]::GetEnvironmentVariable('Path','Machine') + ';' + [System.Environment]::GetEnvironmentVariable('Path','User') }
 
-Say "麦田 · Windows 一键安装（装到 $Base）"
+Say "肥特自媒体工作室 · Windows 一键安装（装到 $Base）"
 New-Item -ItemType Directory -Force -Path $Base | Out-Null
 
 # ---------- 1. Git ----------
@@ -46,7 +46,7 @@ if (-not $nodeOk) {
 }
 
 # ---------- 3. 克隆/更新两个仓库 ----------
-Say '下载麦田本体与发布助手'
+Say '下载肥特自媒体工作室与麦田发布助手'
 foreach ($r in @('mdldm-maitian','mdldm-maitian-publisher')) {
   $dest = Join-Path $Base $r
   if (Test-Path (Join-Path $dest '.git')) { Tip "更新 $r"; git -C $dest pull --ff-only -q }

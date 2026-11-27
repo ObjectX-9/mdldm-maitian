@@ -2,16 +2,18 @@ import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
 import { fileURLToPath } from 'node:url';
-import { db, episodes, getEpisode, getTasks, getMeta, setMeta, NAMES } from './db.mjs';
-import { availablePlatforms, isPlatformEnabled } from './platforms.ts';
+import { db, episodes, getEpisode, getMeta, setMeta, NAMES, readRows } from './db.mjs';
+import { availablePlatforms, enabledPlatforms, isPlatformEnabled } from './platforms.ts';
 import { ensure, evaluate, sleep, withTab } from './driver.mjs';
 import { importFeedback } from './feedback.ts';
 import { commentAdapters, commentScript, commentUrl } from './comment-adapters.ts';
+import { mongoDb } from './mongodb.ts';
 
 export interface CommentSettings { enabled: boolean; intervalMinutes: number; maxPosts: number; maxCommentsPerPost: number }
 interface CapturedComment { id: string; author: string; content: string; likes: number; publishedAt: string }
 interface Scan { comments: CapturedComment[]; login: boolean; empty: boolean; matched: number; url: string }
 interface CollectionRow { episode_id: string; platform: string; status: string; detail: string; added: number; collected_at: string }
+interface CommentTask { episode_id: string; platform: string; url: string }
 const configPath = process.env.MAITIAN_CONFIG || path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'config.json');
 const defaults: CommentSettings = { enabled: true, intervalMinutes: 360, maxPosts: 10, maxCommentsPerPost: 100 };
 let settings = { ...defaults };
@@ -35,14 +37,28 @@ export function saveCommentSettings(value: Partial<CommentSettings>): CommentSet
   finally { if (fs.existsSync(temp)) fs.unlinkSync(temp); }
   settings = next; return { ...next };
 }
-export function commentCollectionInfo() {
-  return { settings: commentSettings(), platforms: availablePlatforms().map(platform => ({ platform, name: NAMES[platform], supported: !!commentAdapters[platform], enabled: isPlatformEnabled(platform) })), lastRunAt: getMeta('commentsLastRun') || null, lastError: getMeta('commentsLastError') || '',
-    results: db.prepare('SELECT * FROM feedback_collection ORDER BY collected_at DESC LIMIT 100').all() as unknown as CollectionRow[] };
+export async function commentCollectionInfo() {
+  const keys = ['commentsLastRun', 'commentsLastError'];
+  const [results, status] = await Promise.all([
+    readRows<CollectionRow>('feedback_collection', {}, 'SELECT * FROM feedback_collection ORDER BY collected_at DESC LIMIT 100', [],
+      { sort: { collected_at: -1 }, limit: 100 }),
+    readRows<{ _id: string; value: string }>('meta', { _id: { $in: keys } },
+      'SELECT key AS _id, value FROM meta WHERE key IN (?, ?)', keys, { projection: { _id: 1, value: 1 } }),
+  ]);
+  const enabled = new Set(enabledPlatforms());
+  const meta = new Map(status.map(row => [row._id, row.value]));
+  return {
+    settings: commentSettings(),
+    platforms: availablePlatforms().map(platform => ({ platform, name: NAMES[platform], supported: !!commentAdapters[platform], enabled: enabled.has(platform) })),
+    lastRunAt: meta.get('commentsLastRun') || null,
+    lastError: meta.get('commentsLastError') || '',
+    results,
+  };
 }
-export function commentsNextAt(): string | null {
+export async function commentsNextAt(lastRunAt?: string | null): Promise<string | null> {
   const options = commentSettings();
-  if (!options.enabled || !Object.keys(commentAdapters).some(isPlatformEnabled)) return null;
-  const last = Date.parse(getMeta('commentsLastRun') || '');
+  if (!options.enabled || !enabledPlatforms().some(platform => !!commentAdapters[platform])) return null;
+  const last = Date.parse((lastRunAt === undefined ? await getMeta('commentsLastRun') : lastRunAt) || '');
   return new Date(Math.max(Date.now(), Number.isFinite(last) ? last + options.intervalMinutes * 60000 : 0)).toISOString();
 }
 async function readComments(platform: string, rawUrl: string, limit: number) {
@@ -70,28 +86,59 @@ async function readComments(platform: string, rawUrl: string, limit: number) {
 }
 export async function collectComments(episodeId?: string, platform?: string, scheduled = false) {
   const options = commentSettings();
-  if (platform && (!isPlatformEnabled(platform) || !commentAdapters[platform])) throw new Error('该平台未开启或暂不支持自动采集');
-  if (episodeId && !getEpisode(episodeId)) throw new Error('没有这一期');
-  const selected = episodeId ? [getEpisode(episodeId)!] : episodes().sort((a, b) => Date.parse(b.schedule || b.created_at) - Date.parse(a.schedule || a.created_at));
-  const targets = selected.flatMap(ep => getTasks(ep.id).filter(t => t.state === 'published' && !!t.url && !!commentAdapters[t.platform] && isPlatformEnabled(t.platform) && (!platform || t.platform === platform)).map(t => ({ ep, task: t }))).slice(0, options.maxPosts);
+  const platforms = enabledPlatforms().filter(id => commentAdapters[id] && (!platform || id === platform));
+  if (platform && !platforms.length) throw new Error('该平台未开启或暂不支持自动采集');
+  const episode = episodeId ? await getEpisode(episodeId) : undefined;
+  if (episodeId && !episode) throw new Error('没有这一期');
+  const [selected, tasks] = await Promise.all([
+    episode ? [episode] : platforms.length ? episodes() : [],
+    platforms.length ? readRows<CommentTask>('tasks', {
+      state: 'published', url: { $type: 'string', $ne: '' }, platform: { $in: platforms },
+      ...(episodeId && { episode_id: episodeId }),
+    }, `SELECT episode_id, platform, url FROM tasks WHERE state='published' AND url<>''
+      AND platform IN (${platforms.map(() => '?').join(', ')})
+      ${episodeId ? 'AND episode_id=?' : ''} ORDER BY rowid`,
+    [...platforms, ...(episodeId ? [episodeId] : [])], { projection: { _id: 0, episode_id: 1, platform: 1, url: 1 } }) : [],
+  ]);
+  selected.sort((a, b) => Date.parse(b.schedule || b.created_at) - Date.parse(a.schedule || a.created_at));
+  const byEpisode = new Map<string, CommentTask[]>();
+  for (const task of tasks) {
+    const group = byEpisode.get(task.episode_id);
+    if (group) group.push(task);
+    else byEpisode.set(task.episode_id, [task]);
+  }
+  const targets: { ep: typeof selected[number]; task: CommentTask }[] = [];
+  for (const ep of selected) {
+    const group = byEpisode.get(ep.id) ?? [];
+    targets.push(...group.slice(0, options.maxPosts - targets.length).map(task => ({ ep, task })));
+    if (targets.length >= options.maxPosts) break;
+  }
   let added = 0, failed = 0;
-  if (scheduled || (!episodeId && !platform)) setMeta('commentsLastRun', new Date().toISOString());
-  if (targets.length) { try { await ensure(); } catch (error) { setMeta('commentsLastError', error instanceof Error ? error.message : String(error)); throw error; } }
+  if (scheduled || (!episodeId && !platform)) await setMeta('commentsLastRun', new Date().toISOString());
+  if (targets.length) { try { await ensure(); } catch (error) { await setMeta('commentsLastError', error instanceof Error ? error.message : String(error)); throw error; } }
   for (const { ep, task } of targets) {
     let status = 'success', detail = '', count = 0;
     try {
       const result = await readComments(task.platform, task.url, options.maxCommentsPerPost);
       if (!isPlatformEnabled(task.platform)) throw new Error('平台已关闭，未写入采集结果');
-      if (result.rows.length) { const imported = importFeedback({ episodeId: ep.id, platform: task.platform, format: 'json', text: JSON.stringify(result.rows.map(row => ({ ...row, url: result.url }))) }); count = imported.added; }
+      if (result.rows.length) { const imported = await importFeedback({ episodeId: ep.id, platform: task.platform, format: 'json', text: JSON.stringify(result.rows.map(row => ({ ...row, url: result.url }))) }); count = imported.added; }
       added += count; detail = `读取 ${result.rows.length} 条，新增 ${count} 条（单作品上限 ${options.maxCommentsPerPost}）`;
     } catch (error) { failed++; status = 'failed'; detail = error instanceof Error ? error.message : String(error); }
-    db.prepare('INSERT INTO feedback_collection (episode_id,platform,status,detail,added,collected_at) VALUES (?,?,?,?,?,?) ON CONFLICT(episode_id,platform) DO UPDATE SET status=excluded.status,detail=excluded.detail,added=excluded.added,collected_at=excluded.collected_at').run(ep.id, task.platform, status, detail, count, new Date().toISOString());
+    const collectedAt = new Date().toISOString();
+    const database = await mongoDb();
+    if (database) {
+      const id = JSON.stringify([ep.id, task.platform]);
+      await database.collection<CollectionRow & { _id: string }>('feedback_collection').replaceOne({ _id: id },
+        { episode_id: ep.id, platform: task.platform, status, detail, added: count, collected_at: collectedAt }, { upsert: true });
+    } else {
+      db.prepare('INSERT INTO feedback_collection (episode_id,platform,status,detail,added,collected_at) VALUES (?,?,?,?,?,?) ON CONFLICT(episode_id,platform) DO UPDATE SET status=excluded.status,detail=excluded.detail,added=excluded.added,collected_at=excluded.collected_at').run(ep.id, task.platform, status, detail, count, collectedAt);
+    }
     console.log(`${ep.name} · ${NAMES[task.platform]}：${detail}`);
     await sleep(3000);
   }
-  if (scheduled || (!episodeId && !platform)) setMeta('commentsLastRun', new Date().toISOString());
+  if (scheduled || (!episodeId && !platform)) await setMeta('commentsLastRun', new Date().toISOString());
   console.log(`评论采集完成：${targets.length} 个作品，新增 ${added} 条，失败 ${failed} 个${targets.length ? '' : '（没有已发布且有作品链接的目标）'}`);
-  setMeta('commentsLastError', failed ? `${failed} 个作品采集失败，详情见采集记录` : '');
+  await setMeta('commentsLastError', failed ? `${failed} 个作品采集失败，详情见采集记录` : '');
   if (failed) throw new Error(`${failed} 个作品评论采集失败，详情见评论页采集记录`);
   return { targets: targets.length, added, failed };
 }

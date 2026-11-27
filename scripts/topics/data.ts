@@ -3,6 +3,7 @@ import { constants } from 'node:fs';
 import path from 'node:path';
 import { dataDir, setup, getConfig, getRuns, saveRun, writeJson, requests } from '../../src/topics/store.ts';
 import { runSchema, type Run } from '../../shared/topics.ts';
+import { closeMongo } from '../../src/mongodb.ts';
 const [command, arg, trackArg] = process.argv.slice(2);
 await setup();
 if(command === 'init') {
@@ -51,3 +52,4 @@ if(command === 'init') {
 } else {
   throw new Error('命令：init [YYYY-MM-DD] | import <JSON文件> | finalize <runId>');
 }
+await closeMongo();

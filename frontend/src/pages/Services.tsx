@@ -1,4 +1,4 @@
-import { useCallback, useState } from 'react'
+import { lazy, Suspense, useCallback, useState } from 'react'
 import { Activity, ArrowUpRight, Globe, RefreshCw, Server } from 'lucide-react'
 import type { ProbeFailure, ServiceCheck, ServiceMonitorData, ServiceTrafficRange } from '../../../shared/services'
 import { Badge } from '@/components/ui/badge'
@@ -7,10 +7,12 @@ import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, Di
 import { SearchField } from '@/components/ui/search-field'
 import { SelectControl, SelectOption } from '@/components/ui/select'
 import { Empty, Heading, Panel } from '@/components/common'
-import { LineChart, type Series } from '@/components/charts'
+import type { Series } from '@/components/charts'
 import { useResource } from '@/hooks/use-resource'
 import { getServiceMonitor, getServiceTraffic } from '@/lib/api'
 import './services.css'
+
+const LineChart = lazy(() => import('@/components/charts').then(module => ({ default: module.LineChart })))
 
 const states = [
   { id: 'up', local: '可用', remote: '监听中', color: 'var(--services-up)', tone: 'positive' },
@@ -48,9 +50,11 @@ const trafficRanges: Record<ServiceTrafficRange, string> = {
   '7d': '最近 7 天',
   all: '全部时间',
 }
-const bucketTime = (value: number, showDate: boolean) => new Date(value).toLocaleString('zh-CN', {
-  timeZone: 'Asia/Shanghai', ...(showDate ? { month: '2-digit', day: '2-digit' } : {}),
-  hour: '2-digit', minute: '2-digit', hour12: false,
+const bucketClock = new Intl.DateTimeFormat('zh-CN', {
+  timeZone: 'Asia/Shanghai', hour: '2-digit', minute: '2-digit', hour12: false,
+})
+const bucketDateTime = new Intl.DateTimeFormat('zh-CN', {
+  timeZone: 'Asia/Shanghai', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hour12: false,
 })
 
 function countStates(services: ServiceCheck[]) {
@@ -83,19 +87,25 @@ function ServiceTrafficChart() {
   )
   const tickStep = Math.max(1, Math.ceil((buckets.length - 1) / 6))
   const ticks = buckets.filter((_, index) => index % tickStep === 0 || index === buckets.length - 1)
+  const labels = buckets.map(bucket => (showDate ? bucketDateTime : bucketClock).format(bucket))
+  const pointsBySite = new Map<string, Map<number, NonNullable<typeof data>['points'][number]>>()
+  for (const point of data?.points ?? []) {
+    let points = pointsBySite.get(point.site)
+    if (!points) pointsBySite.set(point.site, points = new Map())
+    points.set(point.bucket, point)
+  }
   const series: Series[] = data ? data.sites.flatMap((site, index) => {
-    const points = data.points.filter(point => point.site === site.host)
-    if (!points.length) return []
-    const byBucket = new Map(points.map(point => [point.bucket, point]))
+    const byBucket = pointsBySite.get(site.host)
+    if (!byBucket) return []
     return [{
       name: site.name,
       color: latencyColors[index % latencyColors.length],
-      points: buckets.map(x => {
+      points: buckets.map((x, bucketIndex) => {
         const point = byBucket.get(x)
         const y = point
           ? metric === 'requests' ? point.requests : metric === 'errors' ? point.errors * 100 / point.requests : point.p95Ms
           : null
-        return { x, y, label: bucketTime(x, showDate) }
+        return { x, y, label: labels[bucketIndex] }
       }),
     }]
   }) : []
@@ -118,7 +128,9 @@ function ServiceTrafficChart() {
       </li>)}
     </ul>}
     {error && <p role="alert" className="service-message">{error}</p>}
-    {series.length ? <LineChart series={series} height={150} suffix={chart.suffix} decimals={chart.decimals} dots shade connectNulls legend={false} xTicks={ticks} />
+    {series.length ? <Suspense fallback={<div className="h-[150px]" />}>
+      <LineChart series={series} height={150} suffix={chart.suffix} decimals={chart.decimals} dots shade connectNulls legend={false} xTicks={ticks} />
+    </Suspense>
       : !error && <p className="service-trend-empty">{data ? '所选时段暂无访问记录' : awaitingBackendUpdate ? '后端重启后可查看这个时段' : '正在读取访问记录…'}</p>}
   </Panel>
 }
@@ -161,7 +173,6 @@ function ServiceCard({ service, remote, checkedAt }: { service: ServiceCheck; re
 export function Services() {
   const [history, setHistory] = useState<{ checkedAt: string; counts: ReturnType<typeof countStates>; services: ServiceCheck[] }[]>([])
   const [latencyMode, setLatencyMode] = useState<'domain' | 'origin'>('domain')
-  const [query, setQuery] = useState('')
   const [refreshing, setRefreshing] = useState(false)
   const load = useCallback(async (signal?: AbortSignal): Promise<ServiceMonitorData> => {
     const next = await getServiceMonitor(signal)
@@ -187,8 +198,6 @@ export function Services() {
     pieOffset += counts[state.id]
     return `${state.color} ${start / total * 100}%, ${state.color} ${pieOffset / total * 100}%`
   })
-  const search = query.trim().toLocaleLowerCase()
-  const visible = services.filter(service => [service.name, service.url ?? '', String(service.port)].some(value => value.toLocaleLowerCase().includes(search)))
   const series: Series[] = states.filter(state => state.id === 'up' || history.some(entry => entry.counts[state.id] > 0)).map(state => ({
     name: remote ? state.remote : state.local,
     color: state.color,
@@ -243,7 +252,9 @@ export function Services() {
           </dl>
         </Panel>
         <Panel title="检测走势" note={`本次打开后 · 最近 ${history.length} 次`}>
-          {history.length < 2 ? <p className="service-trend-empty">下一次检查后显示走势</p> : <LineChart series={series} height={88} />}
+          {history.length < 2 ? <p className="service-trend-empty">下一次检查后显示走势</p> : <Suspense fallback={<div className="h-[88px]" />}>
+            <LineChart series={series} height={88} />
+          </Suspense>}
         </Panel>
       </div>
       <Panel className="service-latency-chart">
@@ -260,8 +271,9 @@ export function Services() {
           </li>)}
         </ul>}
         {failedTimes.length || latencySeries.some(line => line.points.some(point => point.y != null))
-          ? <LineChart series={latencySeries} height={150} suffix=" ms" dots shade legend={false} xTicks={latencyTicks}
+          ? <Suspense fallback={<div className="h-[150px]" />}><LineChart series={latencySeries} height={150} suffix=" ms" dots shade legend={false} xTicks={latencyTicks}
               eventMarkers={failedTimes.map(x => ({ x, color: 'var(--services-down)' }))} />
+            </Suspense>
           : <p className="service-trend-empty">{latencyRows.length ? '暂未测得耗时' : '暂无可测量的服务'}</p>}
         {latencyFailures.length > 0 && <details className="service-latency-failures">
           <summary>虚线标记 · {latencyFailures.length} 次探测失败，查看原因</summary>
@@ -270,16 +282,25 @@ export function Services() {
           </li>)}</ul>
         </details>}
       </Panel>
-      <ServiceTrafficChart />
-      <section aria-labelledby="service-list-heading">
-        <div className="service-list-header">
-          <h2 id="service-list-heading">服务端点 <span>{total}</span></h2>
-          <SearchField label="搜索服务" placeholder="搜索服务、域名或端口" value={query} onValueChange={setQuery} />
-        </div>
-        {visible.length ? <ul className="service-endpoint-grid">{visible.map((service, index) =>
-          <ServiceCard key={`${service.name}-${service.port}-${index}`} service={service} remote={remote} checkedAt={data.checkedAt} />
-        )}</ul> : <Panel><Empty>{search ? '没有符合搜索条件的服务' : '暂无已登记的服务'}</Empty></Panel>}
-      </section>
     </>}
+    <ServiceTrafficChart />
+    {data && <ServiceEndpointList services={services} remote={remote} checkedAt={data.checkedAt} />}
   </div>
+}
+
+function ServiceEndpointList({ services, remote, checkedAt }: { services: ServiceCheck[]; remote: boolean; checkedAt: string }) {
+  const [query, setQuery] = useState('')
+  const search = query.trim().toLocaleLowerCase()
+  const visible = search ? services.filter(service =>
+    [service.name, service.url ?? '', String(service.port)].some(value => value.toLocaleLowerCase().includes(search))
+  ) : services
+  return <section aria-labelledby="service-list-heading">
+    <div className="service-list-header">
+      <h2 id="service-list-heading">服务端点 <span>{services.length}</span></h2>
+      <SearchField label="搜索服务" placeholder="搜索服务、域名或端口" value={query} onValueChange={setQuery} />
+    </div>
+    {visible.length ? <ul className="service-endpoint-grid">{visible.map((service, index) =>
+      <ServiceCard key={`${service.name}-${service.port}-${index}`} service={service} remote={remote} checkedAt={checkedAt} />
+    )}</ul> : <Panel><Empty>{search ? '没有符合搜索条件的服务' : '暂无已登记的服务'}</Empty></Panel>}
+  </section>
 }

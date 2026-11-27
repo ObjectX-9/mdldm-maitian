@@ -9,11 +9,13 @@ const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const D = path.join(ROOT, 'demo'), PROJ = path.join(D, 'projects');
 if (process.argv.includes('--reset')) fs.rmSync(D, { recursive: true, force: true });
 fs.mkdirSync(PROJ, { recursive: true });
-const cfg = { name: '麦田 · 演示', web: { port: 8788, key: 'demo' }, rootPath: PROJ, driver: 'direct', keepAlive: [],
+const cfg = { name: '肥特自媒体工作室 · 演示', web: { port: 8788, key: 'demo' }, rootPath: PROJ, driver: 'direct', keepAlive: [],
   site: { name: '课程站', base: 'https://example.com' }, xHandle: 'demo' };
 fs.writeFileSync(path.join(D, 'config.json'), JSON.stringify(cfg, null, 2));
 process.env.MAITIAN_CONFIG = path.join(D, 'config.json');
 process.env.MAITIAN_DB = path.join(D, 'hub.db');
+delete process.env.MAITIAN_MONGODB_URI;
+for (const key of ['OSS_REGION', 'OSS_BUCKET', 'OSS_ACCESS_KEY_ID', 'OSS_ACCESS_KEY_SECRET']) delete process.env[key];
 const fresh = !fs.existsSync(process.env.MAITIAN_DB);
 
 const { db, upsertEpisode, setTask, saveSnapshot, log, setMeta } = await import('./db.mjs');
@@ -38,7 +40,7 @@ if (fresh) {
   const insS = db.prepare(`INSERT OR REPLACE INTO samples (ts, episode_id, platform, views, likes, comments, favorites, shares) VALUES (?,?,?,?,?,?,?,?)`);
   const W = { bilibili: 0.09, douyin: 0.33, xhs: 0.16, channels: 0.06, youtube: 0.02, x: 0.33, zsz: 0.01 };
   const IR = { bilibili: 0.035, douyin: 0.03, xhs: 0.12, channels: 0.03, youtube: 0.02, x: 0.025, zsz: 0 };
-  EPS.forEach(([t1, t2, off], i) => {
+  for (const [i, [t1, t2, off]] of EPS.entries()) {
     const id = `demo-${i + 1}`, dir = path.join(PROJ, id), at = at18(off), name = `${t1}｜${t2}`;
     fs.mkdirSync(path.join(dir, '封面'), { recursive: true });
     fs.writeFileSync(path.join(dir, '封面', 'cover-4x3.svg'), cover(t1, i));
@@ -47,11 +49,11 @@ if (fresh) {
     const pj = { version: 1, id, episode: i + 1, name, nick: t1.slice(0, 10), schedule: new Date(at).toISOString(), covers: { '3x4': '封面/cover-3x4.svg', '4x3': '封面/cover-4x3.svg' },
       platforms: Object.fromEntries(PL.map(p => [p, { title: t1, desc: `${t2}。📚 课程站：https://example.com/?utm_source=${p}&utm_medium=video&utm_campaign=${camp}`, tags: ['演示账号', 'AI'] }])) };
     fs.writeFileSync(path.join(dir, 'publish.json'), JSON.stringify(pj, null, 2));
-    upsertEpisode({ id, episode: i + 1, name, dir, schedule: pj.schedule }); saveSnapshot(id, pj, true);
+    await upsertEpisode({ id, episode: i + 1, name, dir, schedule: pj.schedule }); await saveSnapshot(id, pj, true);
     const planned = off > 2, future = off > 0;
-    for (const p of PL) setTask(id, p, planned ? 'planned' : future ? (p === 'xhs' ? 'awaiting_user' : 'scheduled') : 'published', planned ? '' : future ? '定时' : '已发布', future ? {} : { url: 'https://example.com/' });
-    log(id, '', 'plan', '演示数据');
-    if (future) return;
+    for (const p of PL) await setTask(id, p, planned ? 'planned' : future ? (p === 'xhs' ? 'awaiting_user' : 'scheduled') : 'published', planned ? '' : future ? '定时' : '已发布', future ? {} : { url: 'https://example.com/' });
+    await log(id, '', 'plan', '演示数据');
+    if (future) continue;
     const total = 6000 + rnd() * 26000;                      // 这一期最终播放
     for (let d = 0; d <= Math.min(-off, 30); d++) {
       const t = at + d * DAY + 16 * 3600e3, k = 1 - Math.exp(-(d + 0.6) / 2.2);
@@ -59,7 +61,7 @@ if (fresh) {
     }
     for (let h = 6; h <= 72 && at + h * 3600e3 < now; h += 6) for (const p of PL) { const v = Math.round(total * W[p] * (1 - Math.exp(-(h / 24 + .1) / 2.2))); insS.run(new Date(at + h * 3600e3).toISOString().slice(0, 16), id, p, v, Math.round(v * IR[p] * .5), 0, 0, 0); }
     db.prepare('INSERT OR REPLACE INTO site_campaigns (campaign, sources, reg, vip, orders, revenue, updated_at) VALUES (?,?,?,?,?,?,?)').run(camp, 'bilibili,x,youtube', Math.round(total / 900), Math.round(total / 6000), Math.round(total / 6000), Math.round(total / 6000) * 499, new Date().toISOString());
-  });
+  }
   const base = { bilibili: 15000, douyin: 12000, xhs: 18000, channels: 4300, youtube: 300, x: 5600, zsz: 3200 };
   const insF = db.prepare('INSERT OR REPLACE INTO followers (day, platform, total, gain, loss, source, collected_at) VALUES (?,?,?,?,?,?,?)');
   for (const p of Object.keys(base)) { let v = base[p]; for (let d = 40; d >= 0; d--) { const g = Math.round(base[p] * 0.0015 * (0.5 + rnd() * 1.5)); v += g; insF.run(day(now - d * DAY), p, v, g, 0, 'demo', new Date().toISOString()); } }
@@ -67,7 +69,7 @@ if (fresh) {
   for (let d = 30; d >= 0; d--) { const r = Math.round(20 + rnd() * 60), v = Math.round(r * (0.05 + rnd() * 0.1)); insD.run(day(now - d * DAY), r, v, v, v * 499); }
   const insC = db.prepare('INSERT OR REPLACE INTO site_channels (source, label, reg, vip, orders, revenue, updated_at) VALUES (?,?,?,?,?,?,?)');
   [['bilibili', 'B站', 820, 70], ['douyin', '抖音', 610, 31], ['xiaohongshu', '小红书', 540, 46], ['twitter', 'X', 380, 9], ['youtube', 'YouTube', 90, 4], ['other', '其他渠道', 160, 8]].forEach(([s, l, r, v]) => insC.run(s, l, r, v, v, v * 499, new Date().toISOString()));
-  setMeta('siteCampaigns', 'on'); setMeta('metricsDay', new Date().toLocaleDateString('zh-CN')); setMeta('doctorDay', new Date().toLocaleDateString('zh-CN'));
+  await setMeta('siteCampaigns', 'on'); await setMeta('metricsDay', new Date().toLocaleDateString('zh-CN')); await setMeta('doctorDay', new Date().toLocaleDateString('zh-CN'));
   console.log('演示数据已生成：demo/');
 }
 const { startWeb } = await tsImport('./web.ts', import.meta.url);

@@ -1,7 +1,6 @@
 import { Disclosure } from '@/components/ui/disclosure'
 import { SelectControl, SelectOption } from '@/components/ui/select'
-import { DatePicker } from '@/components/ui/date-picker'
-import { memo, useDeferredValue, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import { lazy, memo, Suspense, useCallback, useDeferredValue, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { ArrowDownWideNarrow, ArrowLeft, ArrowRight, Bookmark, CalendarDays, Check, ChevronDown, Clapperboard, Copy, Database, Download, ExternalLink, FileText, Heart, Image as ImageIcon, Layers3, LayoutGrid, Lightbulb, LoaderCircle, MessageCircle, Play, Plus, RefreshCw, Search, ShieldCheck, Smartphone, Sparkles, Target, Upload, X } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -14,12 +13,15 @@ import { Checkbox } from '@/components/ui/checkbox';
 import { Textarea } from '@/components/ui/textarea';
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from '@/components/ui/dialog';
-import { appPostTypes, contentTypes, topics, type Annotation, type Bootstrap, type CollectionRequest, type Config, type ContentItem, type Run } from '../../../shared/topics';
-import { api, assetUrl, bootstrap, download } from './api';
+import { appPostTypes, contentTypes, topics } from '../../../shared/topic-catalog';
+import type { Annotation, Bootstrap, CollectionRequest, Config, ContentItem, Run } from '../../../shared/topics';
+import { api, assetUrl, bootstrap, download, getResearchBatch } from './api';
 import { cn } from '@/lib/utils';
+import { scheduleInitialRequest } from '@/hooks/use-resource';
 import { number } from './utils';
 import './styles.less';
-import { ResearchCharts } from './ResearchCharts';
+const ResearchCharts = lazy(() => import('./ResearchCharts').then(module => ({ default: module.ResearchCharts })));
+const DatePicker = lazy(() => import('@/components/ui/date-picker').then(module => ({ default: module.DatePicker })));
 
 export type TopicView = 'overview' | 'library' | 'needs' | 'runs' | 'timeline' | 'apps' | 'settings';
 const viewLabels: Record<TopicView,string> = {overview:'研究总览',library:'热点内容库',needs:'需求洞察',apps:'App 调研',runs:'采集记录',timeline:'采集时间轴',settings:'采集设置'};
@@ -34,11 +36,31 @@ function Empty({title,children,icon}: {title:string;children?:ReactNode;icon?:Re
   return <div className="empty">{icon ?? <Layers3 size={30}/>}<h3>{title}</h3><p>{children}</p></div>;
 }
 function Platform({platform}: {platform:ContentItem['platform']}) { return <span className={`platform ${platform}`}><i/>{platformName[platform]}</span>; }
-function FrameImage({item,className}: {item:ContentItem;className?:string}) {
+function FrameImage({item,className}: {item:Pick<ContentItem, 'id' | 'title' | 'frames'>;className?:string}) {
   const [failed,setFailed] = useState(false); const frame = item.frames[0];
   useEffect(() => setFailed(false),[item.id]);
   return frame && !failed ? <img className={className} src={assetUrl(frame.path)} alt={frame.caption || item.title} onError={() => setFailed(true)} loading="lazy" decoding="async"/> : <div className={cn('image-placeholder',className)}><Clapperboard size={22}/><span>暂无截帧</span></div>;
 }
+const ContentRow = memo(function ContentRow({ item, selected, onSelect }: {
+  item: ContentItem;
+  selected: boolean;
+  onSelect: (id: string) => void;
+}) {
+  return <Button variant="plain" size="none" className={cn('content-row', selected && 'selected')} aria-pressed={selected} onClick={() => onSelect(item.id)}>
+    <div className="row-image"><FrameImage item={item}/><span className="format-icon">{item.format === 'video' ? <Play size={11}/> : <ImageIcon size={11}/>}</span></div>
+    <div className="row-body">
+      <div className="row-platform"><Platform platform={item.platform}/><span>{item.contentType}</span></div>
+      <h3>{item.title}</h3>
+      <p className="row-takeaway"><span>看点</span>{item.analysis.hypotheses[0]?.title || item.analysis.hook || item.summary || '内容待分析'}</p>
+      <p>{item.author}</p>
+      <div className="row-metrics">
+        <span><Heart size={12}/><span className="sr-only">点赞</span>{item.metrics.likes.display || number(item.metrics.likes.value)}</span>
+        <span><MessageCircle size={12}/><span className="sr-only">评论</span>{item.metrics.comments.display || number(item.metrics.comments.value)}</span>
+        <span>{item.publishedText || '日期未确认'}</span>
+      </div>
+    </div>
+  </Button>;
+});
 function PreviewImage({path,caption}: {path:string;caption:string}) {
   const [loaded,setLoaded]=useState(false);const [failed,setFailed]=useState(false);
   return <div className="preview-media" aria-busy={!loaded&&!failed}>{!loaded&&<div className="preview-message" role="status">{failed?<><ImageIcon size={24}/><span>图片暂时无法读取</span></>:<><LoaderCircle className="spin" size={24}/><span>正在加载画面…</span></>}</div>}{!failed&&<img className={loaded?'is-loaded':''} src={assetUrl(path)} alt={caption} decoding="async" onLoad={()=>setLoaded(true)} onError={()=>setFailed(true)}/>}</div>;
@@ -46,7 +68,7 @@ function PreviewImage({path,caption}: {path:string;caption:string}) {
 function Metric({label,metric,icon}: {label:string;metric:ContentItem['metrics']['likes'];icon:ReactNode}) {
   return <div className="metric" data-accent={({点赞:'rose',收藏:'amber',评论:'blue',分享:'green'} as Record<string,string>)[label]}><span>{icon}{label}{metric.basis === 'increment' ? ` · ${metric.window ?? '区间'}新增` : ''}</span><strong>{metric.display || number(metric.value)}</strong></div>;
 }
-export function Topics({view}: {view:TopicView}) {
+export function Topics({view,loadInitial}: {view:TopicView;loadInitial:(includeApps:boolean,signal:AbortSignal)=>Promise<Bootstrap>}) {
   const [data,setData] = useState<Bootstrap | null>(null); const [loading,setLoading] = useState(true);
   const [error,setError] = useState(''); const [notice,setNotice] = useState('');
   function navigate(next:TopicView) { location.hash = `/topics/${next}`; }
@@ -59,47 +81,112 @@ export function Topics({view}: {view:TopicView}) {
   const [selected,setSelected] = useState(''); const [tab,setTab] = useState('frames'); const [collectOpen,setCollectOpen] = useState(false);
   const [collectTrack,setCollectTrack]=useState<'daily'|'app_research'>('daily');
   const [busy,setBusy] = useState(false); const fileInput = useRef<HTMLInputElement>(null); const mainRef = useRef<HTMLElement>(null); const refreshVersion = useRef(0); const refreshAbort = useRef<AbortController|null>(null); const noteDrafts = useRef(new Map<string,string>());
-  async function refresh(runId?:string) {
+  const loaded = useRef<{ runId?: string; apps: boolean; hasRun: boolean } | null>(null);
+  const isApps = view === 'apps';
+  const load = useCallback(async (runId: string | undefined, includeApps: boolean, batchOnly = false) => {
     const version=++refreshVersion.current;refreshAbort.current?.abort();const controller=new AbortController();refreshAbort.current=controller;setLoading(true);setError('');
-    try {const next=await bootstrap(runId,controller.signal);if(version!==refreshVersion.current)return false;setData(next);if(next.run?.id!==data?.run?.id)setMobileDetail(false);return true;}
-    catch(e) {if(version===refreshVersion.current){if(data)setNotice(`刷新失败：${(e as Error).message}，已保留当前数据。`);else setError((e as Error).message);}return false;}
+    try {
+      if (batchOnly && runId && loaded.current) {
+        const { run } = await getResearchBatch(runId, controller.signal);
+        if (version !== refreshVersion.current) return false;
+        if (run?.id === runId) {
+          if (run.id !== loaded.current.runId) setMobileDetail(false);
+          loaded.current = { ...loaded.current, runId: run.id, hasRun: true };
+          setData(current => current && { ...current, run });
+          return true;
+        }
+      }
+      const includeRun = !includeApps || !!runId || loaded.current?.hasRun === true;
+      const next = await (!loaded.current && !runId
+        ? loadInitial(includeApps, controller.signal)
+        : bootstrap(runId, controller.signal, includeApps, includeRun));
+      if (version !== refreshVersion.current) return false;
+      if (next.run?.id !== loaded.current?.runId) setMobileDetail(false);
+      loaded.current = { runId: next.run?.id, apps: next.appResearchItems !== undefined, hasRun: includeRun };
+      setData(next);
+      return true;
+    }
+    catch(e) {if(version===refreshVersion.current){if(loaded.current&&(includeApps||loaded.current.hasRun))setNotice(`刷新失败：${(e as Error).message}，已保留当前数据。`);else setError((e as Error).message);}return false;}
     finally {if(version===refreshVersion.current)setLoading(false);}
-  }
-  useEffect(() => { void refresh();return ()=>{refreshVersion.current++;refreshAbort.current?.abort();}; },[]);
+  }, [loadInitial]);
+  const refresh = (runId?: string) => load(runId, isApps);
+  const selectBatch = (runId: string) => !loading && loaded.current?.runId === runId
+    ? Promise.resolve(true)
+    : load(runId, isApps, true);
+  useEffect(() => scheduleInitialRequest(() => {
+    if (!loaded.current || (isApps ? !loaded.current.apps : !loaded.current.hasRun)) void load(loaded.current?.runId, isApps);
+  }), [isApps, load]);
+  useEffect(() => () => { refreshVersion.current++; refreshAbort.current?.abort(); }, []);
   useEffect(() => { if (!notice) return; const timer=setTimeout(() => setNotice(''),4000); return () => clearTimeout(timer); },[notice]);
   const run = data?.run; const all = run?.items ?? emptyItems;
+  const inLibrary = view === 'library';
+  const waitingForRun = !isApps && loaded.current?.hasRun === false;
+  const viewError = isApps && loaded.current?.apps ? '' : error;
   const showBatchContext = ['overview','library','needs','runs'].includes(view);
   const isResearchView = ['overview','library','needs','apps'].includes(view);
   useEffect(() => { mainRef.current?.scrollTo(0,0); mainRef.current?.closest('.maitian-workspace')?.scrollTo(0,0); },[view,run?.id]);
   useEffect(() => { if(window.matchMedia('(max-width:680px)').matches) mainRef.current?.closest('.maitian-workspace')?.scrollTo(0,0); },[mobileDetail]);
-  const ranked = useMemo(() => new Set(run?.selectedIds ?? []),[run]);
-  const searchableItems = useMemo(() => [...all].sort((a,b)=>sort==='newest'?Date.parse(b.capturedAt)-Date.parse(a.capturedAt):(b.metrics[sort==='comments'?'comments':'likes'].value??-1)-(a.metrics[sort==='comments'?'comments':'likes'].value??-1)).map(item=>({item,text:`${item.title} ${item.author} ${item.summary} ${item.audience.join(' ')}`.toLowerCase()})),[all,sort]);
-  const items = useMemo(() => searchableItems.filter(({item:i,text}) => (pool || ranked.has(i.id)) && (platform === 'all' || i.platform === platform) && (topic === 'all' || i.topics.includes(topic as typeof topics[number])) && (type === 'all' || i.contentType === type) && (!onlyFavorite || data?.annotations[i.id]?.favorite) && text.includes(deferredQuery)).map(({item})=>item),[searchableItems,pool,ranked,platform,topic,type,onlyFavorite,data?.annotations,deferredQuery]);
+  const ranked = useMemo(() => new Set(run?.selectedIds ?? []), [run?.selectedIds]);
+  const sortedItems = useMemo(() => {
+    if (!inLibrary) return [];
+    const metric = sort === 'comments' ? 'comments' : 'likes';
+    return all.map(item => ({
+      item, value: sort === 'newest' ? Date.parse(item.capturedAt) : item.metrics[metric].value ?? -1,
+    })).sort((a, b) => b.value - a.value).map(({ item }) => item);
+  }, [all, inLibrary, sort]);
+  const searching = deferredQuery.length > 0;
+  const searchIndex = useMemo(() => inLibrary && searching ? new Map(all.map(item => [
+    item, `${item.title} ${item.author} ${item.summary} ${item.audience.join(' ')}`.toLowerCase(),
+  ])) : null, [all, inLibrary, searching]);
+  const favorites = onlyFavorite ? data?.annotations : undefined;
+  const items = useMemo(() => sortedItems.filter(item =>
+    (pool || ranked.has(item.id)) && (platform === 'all' || item.platform === platform) &&
+    (topic === 'all' || item.topics.includes(topic as typeof topics[number])) &&
+    (type === 'all' || item.contentType === type) && (!onlyFavorite || favorites?.[item.id]?.favorite) &&
+    (!searchIndex || (searchIndex.get(item) ?? '').includes(deferredQuery))
+  ),[sortedItems,pool,ranked,platform,topic,type,onlyFavorite,favorites,searchIndex,deferredQuery]);
   const hasFilters = platform!=='all' || topic!=='all' || type!=='all' || onlyFavorite || !!query;
   function resetFilters() {setPlatform('all');setTopic('all');setType('all');setOnlyFavorite(false);setQuery('');}
   function openLibrary() {resetFilters();setPool(true);setMobileDetail(false);navigate('library');}
   const item = items.find(i => i.id === selected) ?? items[0];
-  const evidenceComments = all.flatMap(i => i.comments).filter(c => !c.isPromotion && !c.isAuthor).length;
+  const selectItem = useCallback((id: string) => {setSelected(id);setTab('frames');setMobileDetail(true);}, []);
+  const libraryTotal = useMemo(() => inLibrary ? (pool ? all.length : all.filter(entry => ranked.has(entry.id)).length) : 0,
+    [all, inLibrary, pool, ranked]);
+  const counts = useMemo(() => {
+    let comments = 0, evidence = 0, frames = 0;
+    if (showBatchContext) {
+      for (const entry of all) {
+        comments += entry.comments.length;
+        frames += entry.frames.length;
+        for (const comment of entry.comments) {
+          if (!comment.isPromotion && !comment.isAuthor) evidence++;
+        }
+      }
+    }
+    return { comments, evidence, frames };
+  }, [all, showBatchContext]);
   async function annotate(id:string, annotation:Annotation) { try { const saved=await api<Annotation>('annotations',{method:'POST',body:JSON.stringify({id,annotation})}); setData(d => d ? {...d,annotations:{...d.annotations,[id]:saved}} : d); setNotice('收藏与笔记已保存');return true; } catch(e) { setNotice((e as Error).message);return false; } }
   async function importFile(file?: File) { if (!file) return; setBusy(true); try { const imported=await api<Run>('import',{method:'POST',body:await file.text()}); if(await refresh(imported.id))setNotice('本地数据已导入'); } catch(e) { setNotice(`导入失败：${(e as Error).message}`); } finally { setBusy(false); if(fileInput.current) fileInput.current.value=''; } }
   function openEvidence(id:string, target='comments') { setPlatform('all');setTopic('all');setType('all');setQuery('');setOnlyFavorite(false);setPool(true);setSelected(id);setTab(target);setMobileDetail(true);navigate('library'); }
   const researchActions = <div className="topics-actions"><Button variant="ghost" size="icon" aria-label="刷新研究数据" onClick={()=>void refresh(run?.id)} disabled={loading}><RefreshCw className={loading?'spin':''}/></Button>{view!=='settings'&&<><Button variant="outline" onClick={()=>fileInput.current?.click()} disabled={busy}><Upload/>导入</Button><Button onClick={()=>{setCollectTrack(view==='apps'?'app_research':'daily');setCollectOpen(true);}}><Plus/>{view==='apps'?'新建 App 调研':'新建采集'}</Button></>}<input ref={fileInput} hidden type="file" accept="application/json,.json" onChange={event=>void importFile(event.target.files?.[0])}/></div>;
-  const batchStats = <section className={cn("overview-strip",view!=="library"&&"dashboard-stats",view==='overview'&&"research-stats-compact")}><div><div className="stat-icon lavender"><Clapperboard/></div><span>{view==='library'?'入选':'本批次入选内容'}<strong>{run?.selectedIds.length ?? 0}<small>{run?.mode==='historical_import'?'条历史样本':` / ${run?.track==='app_research'?run.config.appResearch.postsPerGroup*2:100} 目标`}</small></strong></span></div><div><div className="stat-icon rose"><MessageCircle/></div><span>{view==='library'?'评论':'已采集评论'}<strong>{all.reduce((n,i) => n+i.comments.length,0)}<small>条可见样本</small></strong></span></div><div><div className="stat-icon mint"><Target/></div><span>{view==='library'?'需求证据':'需求证据样本'}<strong>{evidenceComments}<small>排除已标记推广 / 作者</small></strong></span></div><div><div className="stat-icon amber"><ImageIcon/></div><span>{view==='library'?'画面':'本地内容画面'}<strong>{all.reduce((n,i) => n+i.frames.length,0)}<small>张截帧 / 图文</small></strong></span></div></section>;
-  const batchControl = <div className="topics-batch-toolbar"><span>采集批次</span><div className="workspace-date">{loading?<LoaderCircle size={15} className="spin" aria-label="正在读取批次"/>:<CalendarDays size={15}/>}<FilterSelect label="选择采集批次" value={run?.id ?? ''} onValueChange={value=>void refresh(value)} options={data?.runs.length?data.runs.map(r=>({value:r.id,label:`${r.date} · ${r.mode==='historical_import'?'历史样本':`${r.track==='app_research'?'App 调研':'热点采集'} · ${statuses[r.status]}`} · ${r.id.slice(-6)}`})):[{value:'',label:'暂无采集批次'}]}/></div></div>;
+  const batchStats = <section className={cn("overview-strip",view!=="library"&&"dashboard-stats",view==='overview'&&"research-stats-compact")}><div><div className="stat-icon lavender"><Clapperboard/></div><span>{view==='library'?'入选':'本批次入选内容'}<strong>{run?.selectedIds.length ?? 0}<small>{run?.mode==='historical_import'?'条历史样本':` / ${run?.track==='app_research'?run.config.appResearch.postsPerGroup*2:100} 目标`}</small></strong></span></div><div><div className="stat-icon rose"><MessageCircle/></div><span>{view==='library'?'评论':'已采集评论'}<strong>{counts.comments}<small>条可见样本</small></strong></span></div><div><div className="stat-icon mint"><Target/></div><span>{view==='library'?'需求证据':'需求证据样本'}<strong>{counts.evidence}<small>排除已标记推广 / 作者</small></strong></span></div><div><div className="stat-icon amber"><ImageIcon/></div><span>{view==='library'?'画面':'本地内容画面'}<strong>{counts.frames}<small>张截帧 / 图文</small></strong></span></div></section>;
+  const batchControl = <div className="topics-batch-toolbar"><span>采集批次</span><div className="workspace-date">{loading?<LoaderCircle size={15} className="spin" aria-label="正在读取批次"/>:<CalendarDays size={15}/>}<FilterSelect label="选择采集批次" value={run?.id ?? ''} onValueChange={value=>void selectBatch(value)} options={data?.runs.length?data.runs.map(r=>({value:r.id,label:`${r.date} · ${r.mode==='historical_import'?'历史样本':`${r.track==='app_research'?'App 调研':'热点采集'} · ${statuses[r.status]}`} · ${r.id.slice(-6)}`})):[{value:'',label:'暂无采集批次'}]}/></div></div>;
   return <div className={cn('topics-workspace',view==='library'&&mobileDetail&&'is-mobile-detail')}>
 
     {view!=='apps'&&<div className={cn("topics-page-header",isResearchView&&"is-toolbar",isResearchView&&showBatchContext&&"has-batch",view==='library'&&"is-compact")} >{!isResearchView&&<div><h1>{viewLabels[view]}</h1><p>{view==='overview'?'从热点中发现选题，让内容创作有据可循。':view==='library'?'热门内容、关键画面与用户反馈，一处研究。':view==='needs'?'从真实评论中，找到值得回应的问题。':view==='timeline'?'沿着时间，回看每一次采集与发现。':view==='runs'?'管理采集批次，跟进样本与执行进度。':'设定研究范围与采集偏好。'}</p></div>}{isResearchView&&showBatchContext&&batchControl}{view==='library'&&batchStats}{researchActions}</div>}
     <section ref={mainRef} aria-busy={loading} className={cn('main-area',view==='library'&&'library-layout')}>
-        {error ? <Empty title="暂时无法读取本地数据">{error}<br/>请检查肥特自媒体工作室服务后重试。<Button variant="outline" onClick={() => void refresh(run?.id)} disabled={loading}>{loading?'正在加载…':'重新加载'}</Button></Empty> : loading && !data ? <Empty title="正在读取研究库" icon={<LoaderCircle className="spin"/>}/> : <>
+        {viewError ? <Empty title="暂时无法读取本地数据">{viewError}<br/>请检查肥特自媒体工作室服务后重试。<Button variant="outline" onClick={() => void refresh(run?.id)} disabled={loading}>{loading?'正在加载…':'重新加载'}</Button></Empty> : (loading && !data) || waitingForRun ? <Empty title="正在读取研究库" icon={<LoaderCircle className="spin"/>}/> : <>
           {showBatchContext&&!isResearchView&&batchControl}
           {showBatchContext&&view!=='library'&&batchStats}
-          {view==='library' && <><div className="scope-note"><ShieldCheck size={14}/><span>{run?.mode==='historical_import'?'当前为此前采集的历史样本，未执行每日 Top 50 全量流程。':run?.track==='app_research'?`小红书近 ${run.config.appResearch.windowDays} 天的 App 调研样本，主流与独立产品各 ${run.config.appResearch.postsPerGroup} 条目标。`:`各平台近 ${run?.config.windowDays ?? data?.config.windowDays ?? 7} 天关键词候选池，按可见累计点赞各取前 50；并非全站热榜。`}</span><Button variant="plain" size="none" onClick={() => navigate('runs')}>查看口径<ArrowRight size={12}/></Button></div><div className={cn("research-workbench",mobileDetail&&"mobile-detail-open")}><aside className="content-library"><div className="library-toolbar"><h2>内容库 <span aria-live="polite">{items.length}</span></h2>{hasFilters&&<Button variant="ghost" size="xs" onClick={resetFilters}>清除筛选</Button>}<Button variant="plain" size="none" className={cn('icon-button',onlyFavorite && 'is-on')} aria-label="仅看收藏" aria-pressed={onlyFavorite} onClick={() => setOnlyFavorite(!onlyFavorite)}><Bookmark size={16} fill={onlyFavorite?'currentColor':'none'}/></Button></div><SegmentedControl className="platform-filter" role="group" aria-label="平台筛选">{[['all','全部平台'],['douyin','抖音'],['xiaohongshu','小红书']].map(([value,label])=><Button variant="plain" size="none" key={value} className={platform===value?'active':''} aria-pressed={platform===value} onClick={()=>setPlatform(value)}>{label}</Button>)}</SegmentedControl><SearchField className="search-field" label="搜索内容" placeholder="搜索标题、作者、内容…" value={query} onValueChange={setQuery}/><Disclosure className="library-advanced-filters" title={<>筛选与排序{(topic!=='all'||type!=='all'||sort!=='likes'||pool)&&<span className="library-filter-state">已调整</span>}</>}><div className="library-selects"><FilterSelect label="方向筛选" value={topic} onValueChange={setTopic} options={[{value:'all',label:'全部方向'},...topics.map(t=>({value:t,label:t}))]}/><FilterSelect label="内容类型筛选" value={type} onValueChange={setType} options={[{value:'all',label:'全部类型'},...contentTypes.map(t=>({value:t,label:t}))]}/></div><div className="library-order"><FilterSelect label="内容排序" value={sort} onValueChange={setSort} options={[{value:'likes',label:'点赞最多'},{value:'comments',label:'评论最多'},{value:'newest',label:'最近采集'}]}/><FilterSelect label="内容范围" value={pool?'all':'ranked'} onValueChange={value=>setPool(value==='all')} options={[{value:'ranked',label:run?.track==='app_research'?'调研入选':'各平台 Top 50'},{value:'all',label:'全部候选'}]}/></div></Disclosure><div className="list-caption"><span aria-live="polite">{searchPending?'筛选中 · ':''}显示 {items.length} / {all.filter(i=>pool||ranked.has(i.id)).length} 条内容</span><span><ArrowDownWideNarrow size={13}/>{sort==='newest'?'采集时间':'累计互动'}降序</span></div><div className="content-list" aria-busy={searchPending}>{items.map(i=><Button variant="plain" size="none" className={cn('content-row',item?.id===i.id && 'selected')} aria-pressed={item?.id===i.id} key={i.id} onClick={()=>{setSelected(i.id);setTab('frames');setMobileDetail(true);}}><div className="row-image"><FrameImage item={i}/><span className="format-icon">{i.format==='video'?<Play size={11}/>:<ImageIcon size={11}/>}</span></div><div className="row-body"><div className="row-platform"><Platform platform={i.platform}/><span>{i.contentType}</span></div><h3>{i.title}</h3><p className="row-takeaway"><span>看点</span>{i.analysis.hypotheses[0]?.title || i.analysis.hook || i.summary || '内容待分析'}</p><p>{i.author}</p><div className="row-metrics"><span><Heart size={12}/><span className="sr-only">点赞</span>{i.metrics.likes.display || number(i.metrics.likes.value)}</span><span><MessageCircle size={12}/><span className="sr-only">评论</span>{i.metrics.comments.display || number(i.metrics.comments.value)}</span><span>{i.publishedText || '日期未确认'}</span></div></div></Button>)}{!items.length&&<Empty title="还没有匹配的内容">{all.length?'调整平台、分类或搜索条件。':'点击新建采集，将任务交给 Codex；也可导入本地批次 JSON。'}{hasFilters&&<Button variant="outline" onClick={resetFilters}>清除筛选</Button>}</Empty>}</div><div className="library-bottom"><Database size={12}/><span>本地保存 · 刷新读取最新采集</span></div></aside>
+          {view==='library' && <><div className="scope-note"><ShieldCheck size={14}/><span>{run?.mode==='historical_import'?'当前为此前采集的历史样本，未执行每日 Top 50 全量流程。':run?.track==='app_research'?`小红书近 ${run.config.appResearch.windowDays} 天的 App 调研样本，主流与独立产品各 ${run.config.appResearch.postsPerGroup} 条目标。`:`各平台近 ${run?.config.windowDays ?? data?.config.windowDays ?? 7} 天关键词候选池，按可见累计点赞各取前 50；并非全站热榜。`}</span><Button variant="plain" size="none" onClick={() => navigate('runs')}>查看口径<ArrowRight size={12}/></Button></div><div className={cn("research-workbench",mobileDetail&&"mobile-detail-open")}><aside className="content-library"><div className="library-toolbar"><h2>内容库 <span aria-live="polite">{items.length}</span></h2>{hasFilters&&<Button variant="ghost" size="xs" onClick={resetFilters}>清除筛选</Button>}<Button variant="plain" size="none" className={cn('icon-button',onlyFavorite && 'is-on')} aria-label="仅看收藏" aria-pressed={onlyFavorite} onClick={() => setOnlyFavorite(!onlyFavorite)}><Bookmark size={16} fill={onlyFavorite?'currentColor':'none'}/></Button></div><SegmentedControl className="platform-filter" role="group" aria-label="平台筛选">{[['all','全部平台'],['douyin','抖音'],['xiaohongshu','小红书']].map(([value,label])=><Button variant="plain" size="none" key={value} className={platform===value?'active':''} aria-pressed={platform===value} onClick={()=>setPlatform(value)}>{label}</Button>)}</SegmentedControl><SearchField className="search-field" label="搜索内容" placeholder="搜索标题、作者、内容…" value={query} onValueChange={setQuery}/><Disclosure className="library-advanced-filters" title={<>筛选与排序{(topic!=='all'||type!=='all'||sort!=='likes'||pool)&&<span className="library-filter-state">已调整</span>}</>}><div className="library-selects"><FilterSelect label="方向筛选" value={topic} onValueChange={setTopic} options={[{value:'all',label:'全部方向'},...topics.map(t=>({value:t,label:t}))]}/><FilterSelect label="内容类型筛选" value={type} onValueChange={setType} options={[{value:'all',label:'全部类型'},...contentTypes.map(t=>({value:t,label:t}))]}/></div><div className="library-order"><FilterSelect label="内容排序" value={sort} onValueChange={setSort} options={[{value:'likes',label:'点赞最多'},{value:'comments',label:'评论最多'},{value:'newest',label:'最近采集'}]}/><FilterSelect label="内容范围" value={pool?'all':'ranked'} onValueChange={value=>setPool(value==='all')} options={[{value:'ranked',label:run?.track==='app_research'?'调研入选':'各平台 Top 50'},{value:'all',label:'全部候选'}]}/></div></Disclosure><div className="list-caption"><span aria-live="polite">{searchPending?'筛选中 · ':''}显示 {items.length} / {libraryTotal} 条内容</span><span><ArrowDownWideNarrow size={13}/>{sort==='newest'?'采集时间':'累计互动'}降序</span></div><div className="content-list" aria-busy={searchPending}>{items.map(i=><ContentRow key={i.id} item={i} selected={item?.id===i.id} onSelect={selectItem}/>)}{!items.length&&<Empty title="还没有匹配的内容">{all.length?'调整平台、分类或搜索条件。':'点击新建采集，将任务交给 Codex；也可导入本地批次 JSON。'}{hasFilters&&<Button variant="outline" onClick={resetFilters}>清除筛选</Button>}</Empty>}</div><div className="library-bottom"><Database size={12}/><span>本地保存 · 刷新读取最新采集</span></div></aside>
             <section className="detail-workspace"><div className="mobile-detail-toolbar"><Button variant="ghost" onClick={()=>setMobileDetail(false)}><ArrowLeft/>返回内容库</Button></div>{item ? <ContentDetail key={item.id} item={item} noteDrafts={noteDrafts.current} annotation={data?.annotations[item.id] ?? {favorite:false,note:''}} onAnnotate={a=>annotate(item.id,a)} tab={tab} setTab={setTab} notify={setNotice}/> : <Empty title="从左侧选择一条内容" icon={<LayoutGrid size={34}/>}>查看关键画面、传播拆解和评论需求。</Empty>}</section></div></>}
           {view==='overview' && <OverviewView run={run} isLatest={run?.id===data?.runs[0]?.id} openContent={openEvidence} onLibrary={openLibrary} onNeeds={()=>navigate('needs')} onRuns={()=>navigate('runs')} onCollect={()=>{setCollectTrack('daily');setCollectOpen(true);}}/>}
           {view==='needs' && <NeedsView items={all} report={run?.report} openEvidence={openEvidence}/>}
-          {view==='apps' && data && <AppResearchView entries={data.appResearchItems ?? []} config={data.config.appResearch} actions={researchActions} onOpen={async(runId,itemId,target)=>{if(await refresh(runId))openEvidence(itemId,target);}}/>}
-          {view==='timeline' && <TimelineView runs={data?.runs ?? []} onSelect={(id,target)=>{void refresh(id);navigate(target);}}/>}
-          {view==='runs' && <RunsView data={data} onSelect={id=>{void refresh(id);navigate('library');}}/>}
+          {isApps && data && (data.appResearchItems
+            ? <AppResearchView entries={data.appResearchItems} config={data.config.appResearch} actions={researchActions} onOpen={async(runId,itemId,target)=>{if(await selectBatch(runId))openEvidence(itemId,target);}}/>
+            : <Empty title={loading ? '正在读取 App 调研' : '暂时无法读取 App 调研'}>{!loading && <Button variant="outline" onClick={() => void refresh(run?.id)}>重新加载</Button>}</Empty>)}
+          {view==='timeline' && <TimelineView runs={data?.runs ?? []} onSelect={(id,target)=>{void selectBatch(id);navigate(target);}}/>}
+          {view==='runs' && <RunsView data={data} onSelect={id=>{void selectBatch(id);navigate('library');}}/>}
           {view==='settings' && data && <SettingsView key={JSON.stringify(data.config)} config={data.config} onSave={async config=>{await api('config',{method:'POST',body:JSON.stringify(config)});setData({...data,config});setNotice('采集设置已保存，下次 Codex 执行时生效');}}/>}
         </>}
       </section>
@@ -138,24 +225,33 @@ function ContentDetail({item,annotation,onAnnotate,tab,setTab,noteDrafts}: {item
 }
 
 function OverviewView({run,openContent,onLibrary,onNeeds,onRuns,onCollect}: {run:Run|null|undefined;isLatest:boolean;openContent:(id:string,target?:string)=>void;onLibrary:()=>void;onNeeds:()=>void;onRuns:()=>void;onCollect:()=>void}) {
+  const items=run?.items ?? emptyItems;
+  const { recent, focuses, distribution } = useMemo(() => {
+    const recent=[...items].sort((a,b)=>Date.parse(b.capturedAt)-Date.parse(a.capturedAt)).slice(0,6);
+    type Focus={title:string;description:string;priority:'P0'|'P1'|'P2';opportunity:string;sourceItem:ContentItem;sources:{item:ContentItem;comment:ContentItem['comments'][number]}[]};
+    const focusByTitle=new Map<string,Focus>();
+    const byType = new Map<ContentItem['contentType'], number>();
+    for (const item of items) {
+      byType.set(item.contentType, (byType.get(item.contentType) ?? 0) + 1);
+      for (const need of item.analysis.needs) {
+        const evidence=item.comments.filter(c=>need.commentIds.includes(c.id)&&!c.isAuthor&&!c.isPromotion);
+        if (!evidence.length) continue;
+        let focus=focusByTitle.get(need.title);
+        if (!focus) {focus={title:need.title,description:need.description,priority:need.priority,opportunity:need.opportunity,sourceItem:item,sources:[]};focusByTitle.set(need.title,focus);}
+        if (need.priority<focus.priority) {focus.priority=need.priority;focus.sourceItem=item;focus.description=need.description;focus.opportunity=need.opportunity;}
+        for (const comment of evidence) if (!focus.sources.some(s=>s.item.id===item.id&&s.comment.id===comment.id)) focus.sources.push({item,comment});
+      }
+    }
+    return {
+      recent,
+      focuses: [...focusByTitle.values()].sort((a,b)=>a.priority.localeCompare(b.priority)||b.sources.length-a.sources.length),
+      distribution: [...byType].map(([type,count])=>({type,count})).sort((a,b)=>b.count-a.count),
+    };
+  }, [items]);
   if (!run) return <div className="page-content"><Empty title="从第一批内容开始研究" icon={<LayoutGrid size={32}/>}>采集后，这里会汇总最新内容、研究结论和需要关注的问题。<Button onClick={onCollect}><Plus/>新建采集</Button></Empty></div>;
-  const items=run.items;
-  const recent=[...items].sort((a,b)=>Date.parse(b.capturedAt)-Date.parse(a.capturedAt)).slice(0,6);
-  type Focus={title:string;description:string;priority:'P0'|'P1'|'P2';opportunity:string;sourceItem:ContentItem;sources:{item:ContentItem;comment:ContentItem['comments'][number]}[]};
-  const focusByTitle=new Map<string,Focus>();
-  for (const item of items) for (const need of item.analysis.needs) {
-    const evidence=item.comments.filter(c=>need.commentIds.includes(c.id)&&!c.isAuthor&&!c.isPromotion);
-    if (!evidence.length) continue;
-    let focus=focusByTitle.get(need.title);
-    if (!focus) {focus={title:need.title,description:need.description,priority:need.priority,opportunity:need.opportunity,sourceItem:item,sources:[]};focusByTitle.set(need.title,focus);}
-    if (need.priority<focus.priority) {focus.priority=need.priority;focus.sourceItem=item;focus.description=need.description;focus.opportunity=need.opportunity;}
-    for (const comment of evidence) if (!focus.sources.some(s=>s.item.id===item.id&&s.comment.id===comment.id)) focus.sources.push({item,comment});
-  }
-  const focuses=[...focusByTitle.values()].sort((a,b)=>a.priority.localeCompare(b.priority)||b.sources.length-a.sources.length);
-  const distribution=[...new Set(items.map(item=>item.contentType))].map(type=>({type,count:items.filter(item=>item.contentType===type).length})).sort((a,b)=>b.count-a.count);
   const collectedAt=recent[0]?.capturedAt??run.finishedAt??run.startedAt;
   return <div className="page-content overview-page">
-    <ResearchCharts items={items}/>
+    <Suspense fallback={<Empty title="加载研究图表…" />}><ResearchCharts items={items}/></Suspense>
     <div className="dashboard-analysis">
       <Card className="sample-distribution"><CardHeader><div><CardTitle>内容样本分布</CardTitle><p className="dashboard-description">本批次 {items.length} 条内容 · 按内容类型统计</p></div><Badge variant="outline">{run.mode==='historical_import'?'历史样本':'采集快照'}</Badge></CardHeader><CardContent><div className="distribution-platforms">{(['douyin','xiaohongshu'] as const).map(platform=><span key={platform}><Platform platform={platform}/><strong>{items.filter(item=>item.platform===platform).length}</strong><span>条</span></span>)}</div>{distribution.length?<div className="distribution-bars">{distribution.map(({type,count})=><div className="distribution-row" data-type={type} key={type}><span>{type}</span><div className="distribution-track"><div style={{width:`${count/items.length*100}%`}}/></div><strong>{count}<small> / {items.length}</small></strong></div>)}</div>:<p className="dashboard-description">暂无内容，采集完成后显示分布。</p>}<p className="distribution-note">展示已采集样本的构成，不代表平台整体占比。</p></CardContent></Card>
       <Card className="dashboard-summary"><CardHeader><CardTitle>本批次研究摘要</CardTitle><Badge variant="outline">{run.mode==='historical_import'?'历史导入':statuses[run.status]}</Badge></CardHeader><CardContent><h2>{run.report.summary||`已收集 ${items.length} 条内容，${focuses.length} 项有评论证据的需求`}</h2>{run.report.findings.length?<ul>{run.report.findings.slice(0,3).map((finding,index)=><li key={index}>{finding}</li>)}</ul>:<p className="dashboard-description">跨内容的研究结论等待整理。</p>}<div className="dashboard-summary-footer"><span>采集于 {new Date(collectedAt).toLocaleString('zh-CN',{timeZone:'Asia/Shanghai',month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit'})}</span><Button variant="ghost" size="sm" onClick={onRuns}>采集记录<ArrowRight/></Button></div></CardContent></Card>
@@ -174,16 +270,46 @@ function NeedsView({items,report,openEvidence}: {items:ContentItem[];report?:Run
   const needs=useMemo(()=>evidenceNeeds.filter(n=>(priority==='all'||n.need.priority===priority)&&`${n.need.title} ${n.need.description} ${n.need.opportunity}`.toLowerCase().includes(deferredQuery)),[evidenceNeeds,priority,deferredQuery]);
   return <div className="page-content">{report?.summary&&<Disclosure className="needs-summary" title={<> 本批次研究摘要 · {report.summary}</>}> {report.findings.map((f,i)=><p key={i}>{f}</p>)}</Disclosure>}<div className="needs-toolbar"><h2>需求证据 <span aria-live="polite">{needs.length}</span></h2><SearchField className="search-field" label="搜索需求" placeholder="搜索需求、痛点、机会…" value={query} onValueChange={setQuery}/><FilterSelect label="需求优先级" value={priority} onValueChange={setPriority} options={[{value:'all',label:'全部优先级'},...['P0','P1','P2'].map(value=>({value,label:value}))]}/>{(query||priority!=='all')&&<Button variant="ghost" size="sm" onClick={()=>{setQuery('');setPriority('all');}}>清除筛选</Button>}</div><p className="subtle">优先级是研究判断；证据数量指当前已采样评论，不等于市场需求人数。</p><div className="insights-grid">{needs.map(({item,need,comments})=><Card key={`${item.id}:${need.id}`}><CardHeader><CardTitle>{need.title}</CardTitle><Badge variant="secondary" className={`priority priority-${need.priority}`}>{need.priority}</Badge></CardHeader><CardContent><span className="need-source">来源：{item.title}</span><p>{need.description}</p><div className="need-opportunity"><Lightbulb size={15}/><div><strong>可以怎么做</strong>{need.opportunity}</div></div>{comments.slice(0,3).map(c=><blockquote key={c.id}>{c.text}</blockquote>)}<div className="insight-footer"><Platform platform={item.platform}/><span>{comments.length} 条可见用户证据</span><Button variant="plain" size="none" onClick={()=>openEvidence(item.id)}>查看上下文<ArrowRight size={13}/></Button></div></CardContent></Card>)}</div>{!needs.length&&<Empty title={query||priority!=='all'?'没有匹配的需求':'需求仍在等待证据'}>{query||priority!=='all'?'调整搜索词或优先级筛选。':'采集评论并完成分析后，这里会显示可追溯的用户需求。'}</Empty>}{!!report?.limitations.length&&<div className="limitations"><ShieldCheck size={16}/><div>{report.limitations.map((l,i)=><p key={i}>{l}</p>)}</div></div>}</div>;
 }
-function AppResearchView({entries,config,actions,onOpen}: {entries:Bootstrap['appResearchItems'];config:Config['appResearch'];actions:ReactNode;onOpen:(runId:string,itemId:string,target:string)=>Promise<void>}) {
+function AppResearchView({entries,config,actions,onOpen}: {entries:NonNullable<Bootstrap['appResearchItems']>;config:Config['appResearch'];actions:ReactNode;onOpen:(runId:string,itemId:string,target:string)=>Promise<void>}) {
   const [group,setGroup]=useState('all');const [postType,setPostType]=useState('all');const [query,setQuery]=useState('');
   const deferredQuery=useDeferredValue(query.trim().toLowerCase());
   const samples=useMemo(()=>entries.filter(e=>e.item.platform==='xiaohongshu').sort((a,b)=>Date.parse(b.item.capturedAt)-Date.parse(a.item.capturedAt)),[entries]);
-  const filtered=useMemo(()=>samples.filter(({item})=>(group==='all'||item.appResearch?.productGroup===group)&&(postType==='all'||item.appResearch?.postType===postType)&&`${item.title} ${item.summary} ${item.appResearch?.appNames.join(' ')??''} ${item.appResearch?.dimensions.join(' ')??''}`.toLowerCase().includes(deferredQuery)),[samples,group,postType,deferredQuery]);
-  const userComments=samples.flatMap(e=>e.item.comments).filter(c=>!c.isAuthor&&!c.isPromotion);
-  const needs=filtered.flatMap(({item,runId})=>item.analysis.needs.map(need=>({item,runId,need,evidence:item.comments.filter(c=>need.commentIds.includes(c.id)&&!c.isAuthor&&!c.isPromotion)}))).filter(row=>row.evidence.length>0).sort((a,b)=>a.need.priority.localeCompare(b.need.priority)||b.evidence.length-a.evidence.length);
-  const focus=needs.filter((row,index)=>needs.findIndex(other=>other.need.title===row.need.title)===index).slice(0,3);
+  const filtered = useMemo(() => samples.filter(({ item }) =>
+    (group === 'all' || item.appResearch?.productGroup === group) &&
+    (postType === 'all' || item.appResearch?.postType === postType) &&
+    (!deferredQuery || `${item.title} ${item.summary} ${item.appResearch?.appNames.join(' ') ?? ''} ${item.appResearch?.dimensions.join(' ') ?? ''}`.toLowerCase().includes(deferredQuery))
+  ), [samples, group, postType, deferredQuery]);
+  const { rankedNeeds, userCommentCount } = useMemo(() => {
+    let userCommentCount = 0;
+    const rankedNeeds = samples.flatMap(({ item, runId }) => {
+      const counts = new Map<string, number>();
+      for (const comment of item.comments) {
+        if (comment.isAuthor || comment.isPromotion) continue;
+        userCommentCount++;
+        counts.set(comment.id, (counts.get(comment.id) ?? 0) + 1);
+      }
+      return item.analysis.needs.flatMap(need => {
+        let evidenceCount = 0;
+        for (const id of new Set(need.commentIds)) evidenceCount += counts.get(id) ?? 0;
+        return evidenceCount ? [{ item, runId, need, evidenceCount }] : [];
+      });
+    }).sort((a, b) => a.need.priority.localeCompare(b.need.priority) || b.evidenceCount - a.evidenceCount);
+    return { rankedNeeds, userCommentCount };
+  }, [samples]);
+  const focus = useMemo(() => {
+    const visibleItems = new Set(filtered.map(({ item }) => item));
+    const seen = new Set<string>();
+    const rows: typeof rankedNeeds = [];
+    for (const row of rankedNeeds) {
+      if (!visibleItems.has(row.item) || seen.has(row.need.title)) continue;
+      seen.add(row.need.title);
+      rows.push(row);
+      if (rows.length === 3) break;
+    }
+    return rows;
+  }, [filtered, rankedNeeds]);
   const groupName={mainstream:'国内主流产品',indie:'独立开发者产品',unknown:'归属待核实'};
-  return <div className="page-content app-research-page"><div className="app-research-toolbar"><SegmentedControl className="platform-filter" role="group" aria-label="产品分组">{[['all','全部产品'],['mainstream','国内主流'],['indie','独立开发者'],['unknown','待核实']].map(([value,label])=><Button variant="ghost" key={value} className={group===value?'active':''} aria-pressed={group===value} onClick={()=>setGroup(value)}>{label}</Button>)}</SegmentedControl><SearchField className="search-field" label="搜索 App 调研" placeholder="搜索 App、帖子、功能痛点…" value={query} onValueChange={setQuery}/><FilterSelect label="App帖子类型" value={postType} onValueChange={setPostType} options={[{value:'all',label:'全部帖子类型'},...appPostTypes.map(type=>({value:type,label:type}))]}/>{actions}</div><div className="app-research-stats"><div><span>主流产品帖子</span><strong>{samples.filter(e=>e.item.appResearch?.productGroup==='mainstream').length}</strong></div><div><span>独立产品帖子</span><strong>{samples.filter(e=>e.item.appResearch?.productGroup==='indie').length}</strong></div><div><span>用户反馈 / 求推荐</span><strong>{samples.filter(e=>['用户反馈','求推荐'].includes(e.item.appResearch?.postType??'')).length}</strong></div><div><span>非推广、非作者评论样本</span><strong>{userComments.length}</strong></div></div><div className="app-watchlist"><span>主流产品观察清单</span>{config.mainstreamApps.map(name=><Badge variant="outline" key={name}>{name}</Badge>)}<small>用于定向检索，不代表市场排名。</small></div>{focus.length>0&&<section className="app-focus-section"><h3>当前样本里值得关注的需求</h3><div>{focus.map(({item,runId,need,evidence})=><Button variant="plain" size="none" key={need.title} onClick={()=>void onOpen(runId,item.id,'comments')}><span><Target size={13}/>{need.title}<Badge variant="secondary" className={`priority priority-${need.priority}`}>{need.priority}</Badge></span><p>{need.description}</p><small>{evidence.length} 条可见评论证据<ArrowRight size={12}/></small></Button>)}</div></section>}<div className="overview-section-heading"><div><h2>帖子与评论样本 <span>{filtered.length}</span></h2><p>按采集时间排序，同一帖子保留最新快照；开发者发帖不计作真实用户需求证据。</p></div></div><div className="app-post-grid">{filtered.map(({item,runId})=><Card key={item.id}><CardHeader><div className="app-post-labels"><Platform platform={item.platform}/><Badge variant="secondary">{item.appResearch?groupName[item.appResearch.productGroup]:'归属待核实'}</Badge><Badge variant="outline">{item.appResearch?.postType??'其他'}</Badge></div><CardTitle><Button variant="plain" size="none" onClick={()=>void onOpen(runId,item.id,'frames')}>{item.title}<ArrowRight size={14}/></Button></CardTitle></CardHeader><CardContent><div className="app-post-body"><div className="app-post-preview"><FrameImage item={item}/><Button type="button" variant="plain" size="none" aria-label={`查看「${item.title}」的内容画面`} onClick={()=>void onOpen(runId,item.id,'frames')}/></div><div><div className="app-post-products">{item.appResearch?.appNames.map(name=><Badge key={name} variant="outline">{name}</Badge>)}</div><p>{item.summary||'帖子内容等待完整观察。'}</p></div></div><div className="app-post-dimensions">{item.appResearch?.dimensions.map(dimension=><Badge key={dimension} variant="outline">{dimension}</Badge>)}</div><div className="app-post-footer"><span>{item.author}</span><span><Heart size={12}/>{number(item.metrics.likes.value)}</span><Button variant="plain" size="none" onClick={()=>void onOpen(runId,item.id,'comments')}><MessageCircle size={12}/>{item.comments.length} 条已采评论 · {item.commentSampling.readStatus==='all_visible'?'可见评论已读完':item.commentSampling.readStatus==='blocked'?'读取受阻':'待续读'}</Button></div></CardContent></Card>)}</div>{!filtered.length&&<Empty title={samples.length?'暂无匹配的 App 帖子':'还没有 App 调研数据'} icon={<Smartphone size={30}/>}>{samples.length?'调整分组、帖子类型或搜索条件。':'创建调研请求后，由 Codex 使用 工作室专用浏览器 采集小红书帖子、截图及评论，完成后刷新查看。'}</Empty>}<div className="limitations"><ShieldCheck size={14}/><div><p>优先观察功能诉求、会员价格、数据记录与导出、手表同步、AI效果和留存障碍。</p><p>点赞和推广评论不代表产品用户量或付费意愿；独立开发者身份需要原帖中的明确依据。</p></div></div></div>;
+  return <div className="page-content app-research-page"><div className="app-research-toolbar"><SegmentedControl className="platform-filter" role="group" aria-label="产品分组">{[['all','全部产品'],['mainstream','国内主流'],['indie','独立开发者'],['unknown','待核实']].map(([value,label])=><Button variant="ghost" key={value} className={group===value?'active':''} aria-pressed={group===value} onClick={()=>setGroup(value)}>{label}</Button>)}</SegmentedControl><SearchField className="search-field" label="搜索 App 调研" placeholder="搜索 App、帖子、功能痛点…" value={query} onValueChange={setQuery}/><FilterSelect label="App帖子类型" value={postType} onValueChange={setPostType} options={[{value:'all',label:'全部帖子类型'},...appPostTypes.map(type=>({value:type,label:type}))]}/>{actions}</div><div className="app-research-stats"><div><span>主流产品帖子</span><strong>{samples.filter(e=>e.item.appResearch?.productGroup==='mainstream').length}</strong></div><div><span>独立产品帖子</span><strong>{samples.filter(e=>e.item.appResearch?.productGroup==='indie').length}</strong></div><div><span>用户反馈 / 求推荐</span><strong>{samples.filter(e=>['用户反馈','求推荐'].includes(e.item.appResearch?.postType??'')).length}</strong></div><div><span>非推广、非作者评论样本</span><strong>{userCommentCount}</strong></div></div><div className="app-watchlist"><span>主流产品观察清单</span>{config.mainstreamApps.map(name=><Badge variant="outline" key={name}>{name}</Badge>)}<small>用于定向检索，不代表市场排名。</small></div>{focus.length>0&&<section className="app-focus-section"><h3>当前样本里值得关注的需求</h3><div>{focus.map(({item,runId,need,evidenceCount})=><Button variant="plain" size="none" key={need.title} onClick={()=>void onOpen(runId,item.id,'comments')}><span><Target size={13}/>{need.title}<Badge variant="secondary" className={`priority priority-${need.priority}`}>{need.priority}</Badge></span><p>{need.description}</p><small>{evidenceCount} 条可见评论证据<ArrowRight size={12}/></small></Button>)}</div></section>}<div className="overview-section-heading"><div><h2>帖子与评论样本 <span>{filtered.length}</span></h2><p>按采集时间排序，同一帖子保留最新快照；开发者发帖不计作真实用户需求证据。</p></div></div><div className="app-post-grid">{filtered.map(({item,runId})=><Card key={item.id}><CardHeader><div className="app-post-labels"><Platform platform={item.platform}/><Badge variant="secondary">{item.appResearch?groupName[item.appResearch.productGroup]:'归属待核实'}</Badge><Badge variant="outline">{item.appResearch?.postType??'其他'}</Badge></div><CardTitle><Button variant="plain" size="none" onClick={()=>void onOpen(runId,item.id,'frames')}>{item.title}<ArrowRight size={14}/></Button></CardTitle></CardHeader><CardContent><div className="app-post-body"><div className="app-post-preview"><FrameImage item={item}/><Button type="button" variant="plain" size="none" aria-label={`查看「${item.title}」的内容画面`} onClick={()=>void onOpen(runId,item.id,'frames')}/></div><div><div className="app-post-products">{item.appResearch?.appNames.map(name=><Badge key={name} variant="outline">{name}</Badge>)}</div><p>{item.summary||'帖子内容等待完整观察。'}</p></div></div><div className="app-post-dimensions">{item.appResearch?.dimensions.map(dimension=><Badge key={dimension} variant="outline">{dimension}</Badge>)}</div><div className="app-post-footer"><span>{item.author}</span><span><Heart size={12}/>{number(item.metrics.likes.value)}</span><Button variant="plain" size="none" onClick={()=>void onOpen(runId,item.id,'comments')}><MessageCircle size={12}/>{item.comments.length} 条已采评论 · {item.commentSampling.readStatus==='all_visible'?'可见评论已读完':item.commentSampling.readStatus==='blocked'?'读取受阻':'待续读'}</Button></div></CardContent></Card>)}</div>{!filtered.length&&<Empty title={samples.length?'暂无匹配的 App 帖子':'还没有 App 调研数据'} icon={<Smartphone size={30}/>}>{samples.length?'调整分组、帖子类型或搜索条件。':'创建调研请求后，由 Codex 使用 工作室专用浏览器 采集小红书帖子、截图及评论，完成后刷新查看。'}</Empty>}<div className="limitations"><ShieldCheck size={14}/><div><p>优先观察功能诉求、会员价格、数据记录与导出、手表同步、AI效果和留存障碍。</p><p>点赞和推广评论不代表产品用户量或付费意愿；独立开发者身份需要原帖中的明确依据。</p></div></div></div>;
 }
 
 function TimelineView({runs,onSelect}: {runs:Bootstrap['runs'];onSelect:(id:string,target:'overview'|'library')=>void}) {
@@ -257,6 +383,6 @@ function CollectDialog({open,onOpenChange,config,onCreated,notify,track}: {track
   const [date,setDate]=useState(dateInShanghai()); const [request,setRequest]=useState<CollectionRequest|null>(null); const [busy,setBusy]=useState(false); const [error,setError]=useState('');
   useEffect(()=>{if(open){setRequest(null);setError('');}},[open]);
   async function create(){setBusy(true);setError('');try{const r=await api<CollectionRequest>('requests',{method:'POST',body:JSON.stringify({date,track})});setRequest(r);onCreated(r);}catch(e){setError((e as Error).message);}finally{setBusy(false);}}
-  return <Dialog open={open} onOpenChange={onOpenChange}><DialogContent className="collect-dialog"><DialogHeader><DialogTitle>{track==='app_research'?'新建 App 调研':'开始一次内容研究'}</DialogTitle><DialogDescription>创建本地请求，再将指令交给 Codex 执行。</DialogDescription></DialogHeader><div className="collect-steps"><span className="active">1 配置范围</span><ArrowRight size={13}/><span className={request?'active':''}>2 交给 Codex</span><ArrowRight size={13}/><span>3 刷新查看</span></div><label>采集日期<DatePicker value={date} onValueChange={setDate} disabled={!!request} label="采集日期"/></label><div className="collect-scope"><span>{track==='app_research'?`小红书 · 主流产品与独立产品各 ${config?.appResearch.postsPerGroup??10} 条`:'抖音 50 + 小红书 50'}</span><span>近 {track==='app_research'?(config?.appResearch.windowDays??30):(config?.windowDays??7)} 天 · 可见评论与内容</span><p>{track==='app_research'?[...(config?.appResearch.mainstreamApps??[]),...(config?.appResearch.keywords??[])].join(' / '):config?.keywords.join(' / ')}</p></div>{request?<><div className="prompt-box"><p>{request.prompt}</p></div><Button onClick={async()=>{try{await navigator.clipboard.writeText(request.prompt);notify('已复制，请粘贴到 Codex 执行');}catch{setError('剪贴板不可用，请手动选中指令复制。');}}}><Copy/>复制 Codex 指令</Button><p className="subtle">请求已保存 data/topics/requests/{request.id}.json。创建请求不代表采集已启动。</p></>:<Button onClick={()=>void create()} disabled={busy||!date}>{busy?<LoaderCircle className="spin"/>:<Plus/>}创建采集请求</Button>}{error&&<p className="form-error">{error}</p>}</DialogContent></Dialog>;
+  return <Dialog open={open} onOpenChange={onOpenChange}><DialogContent className="collect-dialog"><DialogHeader><DialogTitle>{track==='app_research'?'新建 App 调研':'开始一次内容研究'}</DialogTitle><DialogDescription>创建本地请求，再将指令交给 Codex 执行。</DialogDescription></DialogHeader><div className="collect-steps"><span className="active">1 配置范围</span><ArrowRight size={13}/><span className={request?'active':''}>2 交给 Codex</span><ArrowRight size={13}/><span>3 刷新查看</span></div><label>采集日期<Suspense fallback={<Button type="button" variant="outline" disabled className="w-full justify-start gap-2 font-normal"><CalendarDays size={16}/>{date}</Button>}><DatePicker value={date} onValueChange={setDate} disabled={!!request} label="采集日期"/></Suspense></label><div className="collect-scope"><span>{track==='app_research'?`小红书 · 主流产品与独立产品各 ${config?.appResearch.postsPerGroup??10} 条`:'抖音 50 + 小红书 50'}</span><span>近 {track==='app_research'?(config?.appResearch.windowDays??30):(config?.windowDays??7)} 天 · 可见评论与内容</span><p>{track==='app_research'?[...(config?.appResearch.mainstreamApps??[]),...(config?.appResearch.keywords??[])].join(' / '):config?.keywords.join(' / ')}</p></div>{request?<><div className="prompt-box"><p>{request.prompt}</p></div><Button onClick={async()=>{try{await navigator.clipboard.writeText(request.prompt);notify('已复制，请粘贴到 Codex 执行');}catch{setError('剪贴板不可用，请手动选中指令复制。');}}}><Copy/>复制 Codex 指令</Button><p className="subtle">请求已保存 data/topics/requests/{request.id}.json。创建请求不代表采集已启动。</p></>:<Button onClick={()=>void create()} disabled={busy||!date}>{busy?<LoaderCircle className="spin"/>:<Plus/>}创建采集请求</Button>}{error&&<p className="form-error">{error}</p>}</DialogContent></Dialog>;
 }
 

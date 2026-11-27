@@ -4,14 +4,25 @@
 // 所以局域网里伪造请求头进不来。没配 access 就整块不生效，照旧用口令。
 import crypto from 'node:crypto';
 
-let keys = null, keysAt = 0;
+const certificates = new Map();
+
 async function certs(team, force) {
-  if (keys && !force && Date.now() - keysAt < 3600e3) return keys;
-  const r = await fetch(`https://${team}/cdn-cgi/access/certs`, { signal: AbortSignal.timeout(8000) });
-  const j = await r.json();
-  keys = Object.fromEntries((j.keys || []).map(k => [k.kid, crypto.createPublicKey({ key: k, format: 'jwk' })]));
-  keysAt = Date.now();
-  return keys;
+  let cached = certificates.get(team);
+  if (!cached) {
+    cached = { keys: null, loadedAt: 0, request: null };
+    certificates.set(team, cached);
+  }
+  if (cached.keys && !force && Date.now() - cached.loadedAt < 3600e3) return cached.keys;
+  cached.request ??= fetch(`https://${team}/cdn-cgi/access/certs`, { signal: AbortSignal.timeout(8000) })
+    .then(async response => {
+      if (!response.ok) throw new Error('读取 Cloudflare Access 公钥失败');
+      const data = await response.json();
+      cached.keys = Object.fromEntries((data.keys || []).map(key => [key.kid, crypto.createPublicKey({ key, format: 'jwk' })]));
+      cached.loadedAt = Date.now();
+      return cached.keys;
+    })
+    .finally(() => { cached.request = null; });
+  return cached.request;
 }
 const b64 = s => Buffer.from(s.replace(/-/g, '+').replace(/_/g, '/'), 'base64');
 

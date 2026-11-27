@@ -1,9 +1,6 @@
 import { z } from 'zod';
-export const platforms = ['douyin', 'xiaohongshu'] as const;
-export const topics = ['健身', '运动健康', '体态分析', '减脂减肥', '增肌', '健身App'] as const;
-export const contentTypes = ['动作教学', '跟练课程', '知识科普', '身材展示', '减脂记录', '体态纠正', '测评推荐', '运动娱乐', '励志故事', '商业推广', '求助讨论', '产品发布', '使用反馈', '产品对比', '未分类'] as const;
-export const researchTracks = ['daily', 'app_research'] as const;
-export const appPostTypes = ['用户反馈', '开发者发布', '产品对比', '求推荐', '官方更新', '其他'] as const;
+import { platforms, topics, contentTypes, researchTracks, appPostTypes } from './topic-catalog.ts';
+export { platforms, topics, contentTypes, researchTracks, appPostTypes };
 export const appResearchConfigSchema = z.object({
   enabled: z.boolean().default(true), windowDays: z.number().int().min(1).max(180).default(30),
   postsPerGroup: z.number().int().min(1).max(25).default(10),
@@ -47,10 +44,24 @@ export const runSchema = z.object({
   report: z.object({ summary: z.string(), findings: z.array(z.string()), opportunities: z.array(z.string()), limitations: z.array(z.string()) }),
 });
 export const annotationSchema = z.object({ favorite: z.boolean().default(false), note: z.string().max(20000).default('') });
+export const appResearchListItemSchema = itemSchema.pick({
+  id: true, platform: true, title: true, author: true, capturedAt: true, researchTrack: true,
+  appResearch: true, summary: true,
+}).extend({
+  frames: itemSchema.shape.frames.transform(frames => frames.slice(0, 1)),
+  comments: z.array(commentSchema.pick({ id: true, isAuthor: true, isPromotion: true })).default([]),
+  metrics: itemSchema.shape.metrics.pick({ likes: true }),
+  commentSampling: itemSchema.shape.commentSampling.pick({ readStatus: true }),
+  analysis: itemSchema.shape.analysis.pick({ needs: true }),
+});
 export type ContentItem = z.infer<typeof itemSchema>;
 export type Run = z.infer<typeof runSchema>;
 export type Config = z.infer<typeof configSchema>;
 export type Annotation = z.infer<typeof annotationSchema>;
 export type Platform = typeof platforms[number];
-export type Bootstrap = { appResearchItems: {item:ContentItem;runId:string}[]; runs: Omit<Run, 'items'>[]; run: Run | null; config: Config; annotations: Record<string, Annotation>; requests: CollectionRequest[] };
+export type RunListEntry = Pick<Run, 'id' | 'date' | 'startedAt' | 'finishedAt' | 'status' | 'track' | 'mode' | 'selectedIds' | 'report'> & {
+  coverage: Pick<Run['coverage'][number], 'keyword'>[];
+  config: { appResearch: Pick<Config['appResearch'], 'postsPerGroup'> };
+};
+export type Bootstrap = { appResearchItems?: {item:z.infer<typeof appResearchListItemSchema>;runId:string}[]; runs: RunListEntry[]; run: Run | null; config: Config; annotations: Record<string, Annotation>; requests: Omit<CollectionRequest, 'prompt'>[] };
 export type CollectionRequest = { track?: 'daily' | 'app_research'; id: string; createdAt: string; status: 'pending' | 'running' | 'done' | 'blocked'; prompt: string; date: string; runId?: string };

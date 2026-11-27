@@ -14,54 +14,86 @@ export interface Episode {
   createdAt: string; dir: string; campaign: string; covers: string[]; durationSec: number
   tasks: Task[]; views: number; inter: number
 }
+export type EpisodeOption = Pick<Episode, 'id' | 'name' | 'nick'>
+export type EpisodeIndexItem = Pick<Episode, 'id' | 'name' | 'nick' | 'episode' | 'schedule' | 'createdAt' | 'covers' | 'views'> & {
+  tasks: Pick<Task, 'state'>[]
+}
 export interface Review {
   age: number; partial: boolean; views: number; ints: number; fans: number
   prev: { nick: string; views: number } | null; conv: { reg: number } | null
 }
+export interface PlaybackSample { ts: string; platform: Platform; views: number | null }
 export interface EpisodeDetail extends Episode {
-  snapshotAt: string | null; files: string[]; reviews: Review[]
+  snapshotAt: string | null
+}
+export interface EpisodeArchive {
+  files: string[]; shots: Platform[]
   logs: { ts: string; platform: string; action: string; result: string }[]
 }
 export interface SiteStats { reg: number; vip: number; orders: number; revenue: number }
+export interface SiteSummary {
+  days: (SiteStats & { day: string })[]
+  channels: (SiteStats & { source: string; label: string })[]
+}
+export interface SiteConversion extends SiteSummary {
+  siteName: string
+  campaigns: (SiteStats & { campaign: string; sources: string })[]
+  campaignsOn: boolean
+}
+export type CampaignEpisode = Pick<Episode, 'id' | 'name' | 'nick' | 'episode' | 'schedule' | 'createdAt' | 'covers' | 'views' | 'campaign'>
 export interface Action {
   type: 'sync' | 'metrics' | 'doctor' | 'board' | 'followers' | 'mark' | 'login' | 'retry' | 'comments' | 'wechat-draft'
   id?: string; platform?: Platform; state?: string; note?: string; url?: string; draft?: { title: string; body: string }
 }
 export interface ActionRecord {
-  type: Action['type']; label: string; startedAt: string; done: boolean; ok: boolean | null; tail: string
+  id: string; type: Action['type']; label: string; startedAt: string; done: boolean; ok: boolean | null; tail: string
 }
-export interface Overview {
+export interface JobActivity { actions: ActionRecord[]; busy: boolean }
+export interface WorkspaceStatus {
   enabledPlatforms: Platform[]; platformSettings: { platform: Platform; name: string; enabled: boolean }[]
   name: string; siteOn: boolean; siteName: string; siteLogo: boolean; board?: string; driver: string
-  episodes: Episode[]; actions: ActionRecord[]
-  site: {
-    days: (SiteStats & { day: string })[]
-    channels: (SiteStats & { source: string; label: string })[]
-    campaigns: (SiteStats & { campaign: string; sources: string })[]; campaignsOn: boolean
-  }
-  followers: { day: string; platform: Platform; total: number | null; gain: number | null; loss: number | null }[]
-  wechatReading?: { day: string; readers: number }[]
-  samples: { ts: string; episode_id: string; platform: Platform; views: number | null }[]
-  feed: { ts: string; nick: string; platform: string; action: string; result: string }[]
+  actions: ActionRecord[]; jobsBusy?: boolean
   health: {
     nas: boolean; chrome: boolean; metricsDay: string; doctorDay: string
     login: Partial<Record<Platform, LoginStatus>>
     accounts: { platform: Platform; name: string; status: LoginStatus; checkedAt: string; reason: string }[]
   }
+}
+export interface Overview extends WorkspaceStatus {
+  episodes: Episode[]
+  site: SiteSummary
+  followers: { day: string; platform: Platform; total: number | null; gain: number | null; loss: number | null }[]
+  feed: { ts: string; nick: string; platform: string; action: string; result: string }[]
   now: string
+}
+export type FollowerTotal = Pick<Overview['followers'][number], 'day' | 'platform' | 'total'>
+export interface DashboardData extends Pick<Overview, 'enabledPlatforms' | 'siteOn' | 'siteName' | 'feed'> {
+  followers: FollowerTotal[]
+  site: Pick<SiteSummary, 'days'> & { channels: Pick<SiteSummary['channels'][number], 'label' | 'reg' | 'vip'>[] }
+  episodes: (Omit<EpisodeIndexItem, 'tasks'> & { inter: number; tasks: Pick<Task, 'platform' | 'state' | 'stateCn' | 'm'>[] })[]
+}
+export interface TrafficData extends Pick<Overview, 'enabledPlatforms' | 'siteOn' | 'siteName'> {
+  followers: FollowerTotal[]
+  episodes: (Pick<Episode, 'id' | 'name' | 'nick' | 'episode' | 'schedule' | 'createdAt' | 'covers' | 'views' | 'inter'> & {
+    tasks: Pick<Task, 'platform' | 'url' | 'm'>[]
+  })[]
+}
+export interface SystemDetails {
+  latestEpisodeId: string | null
+  wechatFans: { day: string; total: number | null } | null
+  feed: Overview['feed']
 }
 
 export type JobStatus = 'queued' | 'running' | 'succeeded' | 'failed' | 'cancelled' | 'interrupted'
 export interface Job {
-  id: string; type: string; label: string; status: JobStatus; payload: Action;
+  id: string; type: string; label: string; status: JobStatus;
   createdAt: string; startedAt: string; endedAt: string | null; done: boolean; ok: boolean;
-  tail: string; cancelRequested: boolean; controllable: boolean
+  cancelRequested: boolean; controllable: boolean
 }
 export interface PlatformTask {
   episodeId: string; episodeName: string; episode: number; platform: Platform; name: string;
   state: string; stateCn: string; detail: string; url: string; updatedAt: string; shot: boolean
 }
-export interface JobCenter { jobs: Job[]; tasks: PlatformTask[] }
 export type FeedbackStatus = 'pending' | 'replied' | 'ignored'
 export interface FeedbackComment {
   id: string; episode_id: string; episodeName: string; platform: Platform; platformName: string;

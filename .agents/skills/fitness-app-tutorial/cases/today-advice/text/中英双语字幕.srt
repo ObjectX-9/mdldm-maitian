@@ -1,0 +1,9 @@
+1
+00:00:00,040 --> 00:00:02,780
+点击右下角的「展开」，查看今日建议。
+Tap “Expand” at bottom right to see today’s tips.
+
+2
+00:00:04,220 --> 00:00:07,920
+再向下滑，查看肌群恢复和训练安排。
+Scroll down to see muscle recovery and your training plan.

@@ -4,18 +4,21 @@ import { FileUpload } from '@/components/ui/file-upload'
 import { SelectControl, SelectOption } from '@/components/ui/select'
 import { useCallback, useState } from 'react'
 import { CommentCollectionPanel } from '@/components/comment-collection'
-import { useApp } from '@/context'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { DataTable, Empty, ExternalLink, Heading, Panel, PlatformLabel, Section, Stat, Stats } from '@/components/common'
-import { errorMessage, getFeedback, importFeedback, saveFeedbackTopic, updateFeedback } from '@/lib/api'
+import { errorMessage, getEpisodeOptions, getFeedback, importFeedback, saveFeedbackTopic, updateFeedback } from '@/lib/api'
 import { useResource } from '@/hooks/use-resource'
 import { when } from '@/lib/format'
-import type { FeedbackStatus, Platform } from '@/types'
+import type { FeedbackStatus, Platform, WorkspaceStatus } from '@/types'
 
 const statusNames: Record<FeedbackStatus, string> = { pending: '待处理', replied: '已回复', ignored: '已忽略' }
-export function Feedback() {
-  const { overview: o } = useApp(), [query, setQuery] = useState('')
+export function Feedback({ workspace, refreshWorkspace }: { workspace: WorkspaceStatus | null; refreshWorkspace: () => Promise<void> }) {
+  const [query, setQuery] = useState('')
+  const episodeOptions = useResource(getEpisodeOptions, 60_000)
+  const episodes = episodeOptions.data ?? []
+  const platforms = workspace?.platformSettings.filter(platform => platform.enabled) ?? []
+  const collecting = workspace?.actions.some(action => action.type === 'comments' && !action.done) ?? false
   const load = useCallback((signal?: AbortSignal) => getFeedback(query, signal), [query])
   const { data, error, refresh } = useResource(load, 30000)
   const [episode, setEpisode] = useState(''), [platform, setPlatform] = useState<Platform | ''>(''), [format, setFormat] = useState('lines'), [text, setText] = useState('')
@@ -50,11 +53,11 @@ export function Feedback() {
     catch (e) { setMessage(errorMessage(e)) }
   }
   return <><Heading title="评论反馈">采集或导入自己作品的评论，集中筛选、标记和整理选题。分类与汇总按关键词规则计算。</Heading>
-    {error && <p role="alert" className="mb-4 text-sm text-destructive">{error}</p>}
+    {(error || episodeOptions.error) && <p role="alert" className="mb-4 text-sm text-destructive">{error || episodeOptions.error}</p>}
     <Stats><Stat label="筛选结果" value={data?.total || 0} /><Stat label="待处理" value={data?.pending || 0} /><Stat label="反馈主题" value={data?.themes.length || 0} /><Stat label="问题分组" value={data?.questions.length || 0} note="最多展示 10 组" /></Stats>
-    <CommentCollectionPanel />
+    <CommentCollectionPanel episodes={episodes} collecting={collecting} refreshWorkspace={refreshWorkspace} />
     <Section title="导入评论" note="支持纯文本、JSON、CSV；重复导入自动去重"><Panel>
-      <div className="mb-4 grid gap-3 md:grid-cols-3"><label className="text-sm">作品<SelectControl className="mt-1 w-full rounded-md border bg-background p-2" value={episode} onValueChange={value => setEpisode(value)}><SelectOption value="">选择一期</SelectOption>{o.episodes.map(e => <SelectOption key={e.id} value={e.id}>{e.name}</SelectOption>)}</SelectControl></label><label className="text-sm">平台<SelectControl className="mt-1 w-full rounded-md border bg-background p-2" value={platform} onValueChange={value => setPlatform(value as Platform | '')}><SelectOption value="">选择平台</SelectOption>{o.platformSettings.filter(p => p.enabled).map(p => <SelectOption key={p.platform} value={p.platform}>{p.name}</SelectOption>)}</SelectControl></label><label className="text-sm">格式<SelectControl className="mt-1 w-full rounded-md border bg-background p-2" value={format} onValueChange={value => setFormat(value)}><SelectOption value="lines">纯文本，每行一条</SelectOption><SelectOption value="json">JSON 数组</SelectOption><SelectOption value="csv">CSV 表格</SelectOption></SelectControl></label></div>
+      <div className="mb-4 grid gap-3 md:grid-cols-3"><label className="text-sm">作品<SelectControl className="mt-1 w-full rounded-md border bg-background p-2" value={episode} onValueChange={value => setEpisode(value)}><SelectOption value="">选择一期</SelectOption>{episodes.map(e => <SelectOption key={e.id} value={e.id}>{e.name}</SelectOption>)}</SelectControl></label><label className="text-sm">平台<SelectControl className="mt-1 w-full rounded-md border bg-background p-2" value={platform} onValueChange={value => setPlatform(value as Platform | '')}><SelectOption value="">选择平台</SelectOption>{platforms.map(p => <SelectOption key={p.platform} value={p.platform}>{p.name}</SelectOption>)}</SelectControl></label><label className="text-sm">格式<SelectControl className="mt-1 w-full rounded-md border bg-background p-2" value={format} onValueChange={value => setFormat(value)}><SelectOption value="lines">纯文本，每行一条</SelectOption><SelectOption value="json">JSON 数组</SelectOption><SelectOption value="csv">CSV 表格</SelectOption></SelectControl></label></div>
       <p className="mb-3 text-xs leading-6 text-muted-foreground">可导入平台导出的评论，或粘贴已收集的内容。JSON 字段：id（可选）、author、content、url、publishedAt、likes；CSV 使用同名表头，也支持「作者、评论内容、链接、时间、点赞」。</p>
       <Textarea aria-label="待导入的评论" className="min-h-40 w-full rounded-lg border bg-background p-3 font-mono text-sm" maxLength={500000} value={text} onChange={e => setText(e.target.value)} placeholder={format === 'json' ? '[{"author":"用户","content":"可以出一期教程吗？","likes":3}]' : format === 'csv' ? '作者,评论内容,点赞\n用户,可以出一期教程吗？,3' : '可以出一期教程吗？\n希望增加批量发布功能'} />
       <div className="mt-3 flex flex-wrap items-center gap-3"><Button size="sm" disabled={pending || !text.trim() || !platform || !episode} onClick={submit}>{pending ? '处理中…' : '导入并汇总'}</Button><FileUpload accept=".json,.csv,.txt" disabled={pending} onSelect={file=>void chooseFile(file)}/></div>
@@ -65,8 +68,8 @@ export function Feedback() {
     <Section title="常见问题与需求"><Panel><div className="space-y-3">{data?.questions.length ? data.questions.map(q => <div key={q.id} className="flex items-start gap-3 rounded-lg bg-muted p-3"><Badge variant="secondary">{q.count} 条</Badge><p className="whitespace-pre-wrap break-words text-sm">{q.content}</p></div>) : <Empty>暂无可汇总的问题</Empty>}</div></Panel></Section>
     <Section title="评论明细" note="最多显示 500 条；标记已回复只更新本地记录"><Panel>
       <form className="mb-4 flex flex-wrap gap-3" onSubmit={event => { event.preventDefault(); setQuery(new URLSearchParams({ platform: filterPlatform, episode: filterEpisode, status: filterStatus, search }).toString()) }}>
-        <SelectControl label="按平台筛选评论" className="rounded-md border bg-background p-2 text-sm" value={filterPlatform} onValueChange={value => setFilterPlatform(value)}><SelectOption value="">全部平台</SelectOption>{o.platformSettings.filter(p => p.enabled).map(p => <SelectOption key={p.platform} value={p.platform}>{p.name}</SelectOption>)}</SelectControl>
-        <SelectControl label="按作品筛选评论" className="max-w-64 rounded-md border bg-background p-2 text-sm" value={filterEpisode} onValueChange={value => setFilterEpisode(value)}><SelectOption value="">全部作品</SelectOption>{o.episodes.map(e => <SelectOption key={e.id} value={e.id}>{e.nick}</SelectOption>)}</SelectControl>
+        <SelectControl label="按平台筛选评论" className="rounded-md border bg-background p-2 text-sm" value={filterPlatform} onValueChange={value => setFilterPlatform(value)}><SelectOption value="">全部平台</SelectOption>{platforms.map(p => <SelectOption key={p.platform} value={p.platform}>{p.name}</SelectOption>)}</SelectControl>
+        <SelectControl label="按作品筛选评论" className="max-w-64 rounded-md border bg-background p-2 text-sm" value={filterEpisode} onValueChange={value => setFilterEpisode(value)}><SelectOption value="">全部作品</SelectOption>{episodes.map(e => <SelectOption key={e.id} value={e.id}>{e.nick}</SelectOption>)}</SelectControl>
         <SelectControl label="按状态筛选评论" className="rounded-md border bg-background p-2 text-sm" value={filterStatus} onValueChange={value => setFilterStatus(value)}><SelectOption value="">全部状态</SelectOption>{Object.entries(statusNames).map(([s, label]) => <SelectOption key={s} value={s}>{label}</SelectOption>)}</SelectControl>
         <Input aria-label="搜索评论" className="rounded-md border bg-background px-3 text-sm" placeholder="搜索作者或内容" value={search} onChange={e => setSearch(e.target.value)} maxLength={200} /><Button size="sm" type="submit" variant="outline">筛选</Button>
       </form>

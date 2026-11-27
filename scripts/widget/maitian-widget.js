@@ -88,8 +88,8 @@ function header(w, onDark) {
   const h = w.addStack(); h.centerAlignContent();
   avatarImg(h, 22, onDark ? C.white : new Color('#ffffff'));
   h.addSpacer(6);
-  text(h, data.owner || data.name || '麦田', 13, onDark ? C.white : C.ink);
-  if (data.owner) { h.addSpacer(4); text(h, '· ' + (data.name || '麦田'), 11, onDark ? C.white70 : C.dim, 'medium'); }
+  text(h, data.owner || data.name || '肥特自媒体工作室', 13, onDark ? C.white : C.ink);
+  if (data.owner) { h.addSpacer(4); text(h, '· ' + (data.name || '肥特自媒体工作室'), 11, onDark ? C.white70 : C.dim, 'medium'); }
   h.addSpacer();
   const t = new Date(data.now); text(h, (stale ? '⚠︎ ' : '') + `${t.getHours()}:${String(t.getMinutes()).padStart(2, '0')}`, 11, stale ? C.down : onDark ? C.white70 : C.dim, 'medium');
 }
@@ -139,7 +139,7 @@ const COVER = data && data.latest ? COVER_IMG : null;
 
 if (!data) {
   w.backgroundGradient = bgGradient();
-  text(w, '🌾 连不上麦田', 14); w.addSpacer(4); text(w, '检查麦田地址和小组件口令', 11, C.dim, 'medium');
+  text(w, '🌾 连不上肥特自媒体工作室', 14); w.addSpacer(4); text(w, '检查肥特自媒体工作室地址和小组件口令', 11, C.dim, 'medium');
 } else if (fam === 'accessoryInline') {
   // 锁屏单行（时间上方）：系统只取一行文字和一个图标
   w.addText(`🌾 ${fmt(data.fans.total)} · 今日 ${sign(data.fans.today)}`);
@@ -174,7 +174,7 @@ if (!data) {
 } else if (fam === 'small') {
   w.backgroundGradient = bgGradient(); w.setPadding(13, 14, 13, 14);
   const h = w.addStack(); h.centerAlignContent(); avatarImg(h, 30, new Color('#ffffff')); h.addSpacer(7);
-  const who = h.addStack(); who.layoutVertically(); text(who, data.owner || data.name || '麦田', 12); text(who, stale ? '⚠︎ 旧数据' : (data.owner ? data.name || '麦田' : ''), 10, stale ? C.down : C.dim, 'medium');
+  const who = h.addStack(); who.layoutVertically(); text(who, data.owner || data.name || '肥特自媒体工作室', 12); text(who, stale ? '⚠︎ 旧数据' : (data.owner ? data.name || '肥特自媒体工作室' : ''), 10, stale ? C.down : C.dim, 'medium');
   w.addSpacer();
   fansBlock(w, 26);
   if (data.site) { w.addSpacer(3); const r = w.addStack(); text(r, '7天 ', 10.5, C.dim, 'medium'); text(r, money(data.site.revenue), 11, C.gold); text(r, ` · 会员 ${fmt(data.site.vip)}`, 10.5, C.dim, 'medium'); }

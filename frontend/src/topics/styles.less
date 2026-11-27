@@ -492,6 +492,10 @@ blockquote {background:#fbfbfb;border-left-color:#adadad;padding:10px 13px;font-
  .content-library{display:flex;border-right:0;border-bottom:0;}
  .content-list{display:block;width:100%;max-width:100%;max-height:none;min-height:0;overflow:visible;contain:none;padding:0 8px 8px;}
  .content-row{width:100%;min-width:0;max-width:none;gap:12px;min-height:112px;margin-bottom:6px;}
+ .content-list > .content-row {
+   content-visibility: auto;
+   contain-intrinsic-block-size: auto 88px;
+ }
  .row-image{width:62px;height:84px;}
  .row-body h3{font-size:14px;line-height:1.6;}
  .row-body>p,.row-body>p.row-takeaway{font-size:12px;}

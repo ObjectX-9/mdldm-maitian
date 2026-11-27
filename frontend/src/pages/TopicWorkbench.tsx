@@ -1,14 +1,15 @@
-import { useState } from 'react'
+import { useMemo, useState } from 'react'
 import { Button } from '@/components/ui/button'
 import { SelectControl, SelectOption } from '@/components/ui/select'
 import { Empty, ExternalLink, Heading, Panel } from '@/components/common'
-import { useApp } from '@/context'
 import { useResource } from '@/hooks/use-resource'
-import { errorMessage, getFeedbackTopics, linkFeedbackTopic } from '@/lib/api'
+import { errorMessage, getEpisodeOptions, getFeedbackTopics, linkFeedbackTopic } from '@/lib/api'
 import { episodeHref } from '@/lib/format'
 
 export function TopicWorkbench() {
-  const { overview: { episodes } } = useApp()
+  const episodeOptions = useResource(getEpisodeOptions, 60_000)
+  const episodesById = useMemo(() => new Map(episodeOptions.data?.map(episode => [episode.id, episode])), [episodeOptions.data])
+  const options = useMemo(() => episodeOptions.data?.map(episode => <SelectOption key={episode.id} value={episode.id}>{episode.name}</SelectOption>), [episodeOptions.data])
   const { data, error, refresh } = useResource(getFeedbackTopics, 30000)
   const [saving, setSaving] = useState(false)
   const [message, setMessage] = useState('')
@@ -29,9 +30,9 @@ export function TopicWorkbench() {
   return <>
     <Heading title="选题工作台">回看保存的评论，为每条选题关联一期作品。</Heading>
     <Button asChild variant="outline" size="sm" className="mb-4"><a href="#/feedback">前往评论反馈</a></Button>
-    {(message || error) && <p role="alert" className="mb-4 text-sm text-destructive">{message || error}</p>}
+    {(message || error || episodeOptions.error) && <p role="alert" className="mb-4 text-sm text-destructive">{message || error || episodeOptions.error}</p>}
     {data?.length ? <div className="space-y-3">{data.map(topic => {
-      const episode = episodes.find(item => item.id === topic.episodeId)
+      const episode = topic.episodeId ? episodesById.get(topic.episodeId) : undefined
       return <Panel key={topic.commentId}>
         <div className="grid gap-4 md:grid-cols-[minmax(0,1fr)_minmax(0,16rem)]">
           <div className="min-w-0 space-y-2">
@@ -43,10 +44,10 @@ export function TopicWorkbench() {
           </div>
           <div className="space-y-2">
             <p className="text-xs font-medium">关联作品</p>
-            <SelectControl label="关联作品" className="w-full" value={topic.episodeId ?? ''} disabled={saving} onValueChange={value => void link(topic.commentId, value)}>
+            <SelectControl label="关联作品" className="w-full" value={topic.episodeId ?? ''} disabled={saving || !episodeOptions.data} onValueChange={value => void link(topic.commentId, value)}>
               <SelectOption value="">未关联</SelectOption>
-              {topic.episodeId && !episode && <SelectOption value={topic.episodeId} disabled>关联作品不可用</SelectOption>}
-              {episodes.map(item => <SelectOption key={item.id} value={item.id}>{item.name}</SelectOption>)}
+              {topic.episodeId && !episode && <SelectOption value={topic.episodeId} disabled>{episodeOptions.data || episodeOptions.error ? '关联作品不可用' : '正在读取关联作品…'}</SelectOption>}
+              {options}
             </SelectControl>
             {episode && <a href={episodeHref(episode)} className="text-xs text-primary hover:underline">查看作品档案</a>}
           </div>

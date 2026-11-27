@@ -2,6 +2,7 @@
 import { createHash } from 'node:crypto';
 import { db, getMeta, setMeta } from './db.mjs';
 import { click, closeTab, evaluate, mode, openedTab, openTab, screenshot, sleep, withTab } from './driver.mjs';
+import { mongoDb } from './mongodb.ts';
 
 const ORIGIN = 'https://mp.weixin.qq.com';
 export const WECHAT_HOME = ORIGIN + '/';
@@ -17,7 +18,13 @@ db.exec(`CREATE TABLE IF NOT EXISTS wechat_reading (
   day TEXT PRIMARY KEY, readers INTEGER NOT NULL, collected_at TEXT NOT NULL
 )`);
 
-export function wechatReadingHistory() {
+type WechatReading = { _id: string; day: string; readers: number; collected_at: string };
+export async function wechatReadingHistory() {
+  const database = await mongoDb();
+  if (database) {
+    return (await database.collection<WechatReading>('wechat_reading').find().sort({ day: -1 }).limit(30).toArray())
+      .map(({ day, readers }) => ({ day, readers }));
+  }
   return db.prepare('SELECT day, readers FROM wechat_reading ORDER BY day DESC LIMIT 30').all() as { day: string; readers: number }[];
 }
 
@@ -71,9 +78,9 @@ export async function collectWechatOverview() {
     });
     if (!snapshot) {
       if (loggedOut(await textOn(tab))) {
-        setMeta('login:wechat', 'out');
-        setMeta('loginCheckedAt:wechat', new Date().toISOString());
-        setMeta('loginReason:wechat', '公众号未登录，请扫码登录');
+        await setMeta('login:wechat', 'out');
+        await setMeta('loginCheckedAt:wechat', new Date().toISOString());
+        await setMeta('loginReason:wechat', '公众号未登录，请扫码登录');
         throw new Error('公众号未登录，请扫码登录');
       }
       throw new Error('没有读到公众号首页的总用户数和昨日阅读人数');
@@ -84,12 +91,19 @@ export async function collectWechatOverview() {
     timeZone: 'Asia/Shanghai', year: 'numeric', month: '2-digit', day: '2-digit',
   }).format(new Date());
   const day = new Date(Date.parse(today + 'T00:00:00Z') - 86400_000).toISOString().slice(0, 10);
-  db.prepare(`INSERT INTO wechat_reading (day, readers, collected_at) VALUES (?, ?, ?)
-    ON CONFLICT(day) DO UPDATE SET readers=excluded.readers, collected_at=excluded.collected_at`)
-    .run(day, data.readers, new Date().toISOString());
-  setMeta('login:wechat', 'ok');
-  setMeta('loginCheckedAt:wechat', new Date().toISOString());
-  setMeta('loginReason:wechat', '');
+  const collectedAt = new Date().toISOString();
+  const database = await mongoDb();
+  if (database) {
+    await database.collection<WechatReading>('wechat_reading').replaceOne({ _id: day },
+      { day, readers: data.readers, collected_at: collectedAt }, { upsert: true });
+  } else {
+    db.prepare(`INSERT INTO wechat_reading (day, readers, collected_at) VALUES (?, ?, ?)
+      ON CONFLICT(day) DO UPDATE SET readers=excluded.readers, collected_at=excluded.collected_at`)
+      .run(day, data.readers, collectedAt);
+  }
+  await setMeta('login:wechat', 'ok');
+  await setMeta('loginCheckedAt:wechat', new Date().toISOString());
+  await setMeta('loginReason:wechat', '');
   return { total: data.total, history: [] };
 }
 
@@ -158,7 +172,7 @@ const saveButton = [byText('button', '保存为草稿'), byText('button', '保�
 export async function saveWechatDraft(draft: { title: string; body: string }) {
   directChrome();
   const key = 'wechat:draft:' + createHash('sha256').update(JSON.stringify(draft)).digest('hex');
-  const state = getMeta(key);
+  const state = await getMeta(key);
   if (state === 'saved') return '相同内容已保存为公众号草稿，请到草稿箱确认';
   if (state === 'pending') throw new Error('相同内容已尝试保存，请先到公众号草稿箱核实');
 
@@ -178,7 +192,7 @@ export async function saveWechatDraft(draft: { title: string; body: string }) {
       if (!await waitFor(async () => await evaluate(tab, editorReady).catch(() => false) || null)) throw new Error('公众号文章编辑器未就绪');
 
       // 编辑器可能自动暂存。任何写入前记录尝试，避免中断后自动重复新建。
-      setMeta(key, 'pending');
+      await setMeta(key, 'pending');
       const filled = await evaluate(tab, `(() => {
         if (!(${ownPage})) return false;
         ${editors}
@@ -227,7 +241,7 @@ export async function saveWechatDraft(draft: { title: string; body: string }) {
         });
       })()`).catch(() => 'unknown');
       if (result !== 'saved') throw new Error('微信没有返回草稿保存确认，请到草稿箱核实');
-      setMeta(key, 'saved');
+      await setMeta(key, 'saved');
       return '已保存到公众号草稿箱，请在微信公众平台确认发表';
     } finally {
       if (editor != null && editor !== home) await closeTab(editor).catch(() => {});

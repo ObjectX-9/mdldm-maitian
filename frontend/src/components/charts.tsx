@@ -34,25 +34,34 @@ const axisTick = { fill: 'var(--chart-axis, #92929c)', fontSize: 10 }
 
 export const LineChart = memo(function LineChart({ series, compact = false, fill = false, height = compact ? 88 : 240, suffix = '', shade = false, legend = !compact, decimals = 0, dots = false, connectNulls = false, xTicks, eventMarkers }: { series: Series[]; compact?: boolean; fill?: boolean; height?: number; suffix?: string; shade?: boolean; legend?: boolean; decimals?: number; dots?: boolean; connectNulls?: boolean; xTicks?: number[]; eventMarkers?: { x: number; color: string }[] }) {
   const gradient = useId().replaceAll(':', '')
-  const { rows, minimum, maximum, labels, hasData } = useMemo(() => {
+  const { rows, minimum, maximum, labels, hasData, seriesCounts } = useMemo(() => {
     const byTime = new Map<number, Record<string, string | number | null>>()
     const labels = new Map<number, string>()
-    const values: number[] = []
-    series.forEach((line, index) => line.points.forEach(point => {
-      if (!Number.isFinite(point.x)) return
-      let row = byTime.get(point.x)
-      if (!row) {
-        row = { x: point.x, label: point.label }
-        series.forEach((_, key) => { row![`series${key}`] = null })
-        byTime.set(point.x, row)
+    const missing = Object.fromEntries(series.map((_, index) => [`series${index}`, null]))
+    let minimum = Infinity, maximum = -Infinity
+    const seriesCounts = series.map((line, index) => {
+      let count = 0
+      for (const point of line.points) {
+        const y = point.y
+        if (y != null && Number.isFinite(y)) count++
+        if (!Number.isFinite(point.x)) continue
+        let row = byTime.get(point.x)
+        if (!row) {
+          row = { x: point.x, label: point.label, ...missing }
+          byTime.set(point.x, row)
+        }
+        labels.set(point.x, point.label)
+        if (y != null && Number.isFinite(y)) {
+          row[`series${index}`] = y
+          minimum = Math.min(minimum, y)
+          maximum = Math.max(maximum, y)
+        }
       }
-      labels.set(point.x, point.label)
-      if (point.y != null && Number.isFinite(point.y)) {
-        row[`series${index}`] = point.y
-        values.push(point.y)
-      }
-    }))
-    return { rows: [...byTime.values()].sort((a, b) => Number(a.x) - Number(b.x)), labels, minimum: values.length ? Math.min(...values) : 0, maximum: values.length ? Math.max(...values) : 1, hasData: values.length > 0 }
+      return count
+    })
+    const hasData = minimum !== Infinity
+    return { rows: [...byTime.values()].sort((a, b) => Number(a.x) - Number(b.x)), labels,
+      minimum: hasData ? minimum : 0, maximum: hasData ? maximum : 1, hasData, seriesCounts }
   }, [series])
   if (!hasData && !eventMarkers?.length) return compact ? null : <Empty>暂无走势数据</Empty>
   const domain: [number, number] = compact ? [minimum, Math.max(maximum, minimum + 1)] : [Math.min(0, minimum), Math.max(1, maximum)]
@@ -70,7 +79,7 @@ export const LineChart = memo(function LineChart({ series, compact = false, fill
           <YAxis hide={compact} allowDecimals={decimals > 0} domain={domain} width={48} tickFormatter={value => formatChartValue(value, decimals)} tick={axisTick} tickLine={false} axisLine={false} tickCount={4}/>
           <Tooltip content={<ChartTooltip suffix={suffix} decimals={decimals}/>} cursor={compact ? false : { stroke: 'var(--chart-cursor, #c8c8d0)', strokeDasharray: '3 3' }} isAnimationActive={false}/>
           {eventMarkers?.map(({ x, color }) => <ReferenceLine key={x} x={x} stroke={color} strokeDasharray="3 4" strokeOpacity={0.65} />)}
-          {series.map((line, index) => <Area key={index} type="monotone" dataKey={`series${index}`} name={line.name} stroke={line.color} strokeWidth={2} fill={compact || shade ? `url(#${gradient}-${index})` : 'transparent'} connectNulls={connectNulls} dot={dots || line.points.filter(point => point.y != null && Number.isFinite(point.y)).length === 1 ? { r: dots ? 2 : 3, fill: line.color, strokeWidth: 0 } : false} activeDot={{ r: 4, stroke: 'var(--card, #fff)', strokeWidth: 2 }} isAnimationActive={false}/>)}
+          {series.map((line, index) => <Area key={index} type="monotone" dataKey={`series${index}`} name={line.name} stroke={line.color} strokeWidth={2} fill={compact || shade ? `url(#${gradient}-${index})` : 'transparent'} connectNulls={connectNulls} dot={dots || seriesCounts[index] === 1 ? { r: dots ? 2 : 3, fill: line.color, strokeWidth: 0 } : false} activeDot={{ r: 4, stroke: 'var(--card, #fff)', strokeWidth: 2 }} isAnimationActive={false}/>)}
         </AreaChart>
       </ResponsiveContainer>
     </div>

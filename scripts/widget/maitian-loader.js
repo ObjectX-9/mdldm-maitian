@@ -16,7 +16,7 @@ try {
 }
 if (!code) {
   const w = new ListWidget(); w.url = MAITIAN;
-  const t = w.addText('🌾 连不上麦田'); t.font = Font.boldSystemFont(14);
+  const t = w.addText('🌾 连不上肥特自媒体工作室'); t.font = Font.boldSystemFont(14);
   if (config.runsInWidget) Script.setWidget(w); else await w.presentSmall();
   Script.complete();
 } else {

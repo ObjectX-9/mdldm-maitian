@@ -1,9 +1,13 @@
 import crypto from 'node:crypto';
-import { db, getEpisode, NAMES } from './db.mjs';
-import { isPlatformEnabled } from './platforms.ts';
+import { db, getEpisode, NAMES, readRows } from './db.mjs';
+import { enabledPlatforms, isPlatformEnabled } from './platforms.ts';
+import { mongoDb } from './mongodb.ts';
 
 export type FeedbackStatus = 'pending' | 'replied' | 'ignored';
 export interface FeedbackRow { id: string; episode_id: string; platform: string; author: string; content: string; url: string; published_at: string; likes: number; category: string; status: FeedbackStatus; created_at: string }
+type FeedbackDocument = FeedbackRow & { _id: string };
+type FeedbackTopic = { _id: string; comment_id: string; episode_id: string | null; created_at: string };
+type FeedbackTopicRow = { commentId: string; episodeId: string | null; platform: string; author: string; content: string; url: string; sourceEpisodeName: string };
 const categories = [
   { name: '问题反馈', keywords: ['报错', '失败', '不能用', '不支持', '卡住', '打不开', 'bug', '无效', '错误'] },
   { name: '教程需求', keywords: ['教程', '怎么做', '如何', '求教', '演示', '步骤', '源码', '模板', '资料'] },
@@ -37,8 +41,8 @@ function parseCSV(text: string): Record<string, string>[] {
   if (!headers.some(h => ['content', '评论', '评论内容'].includes(h))) return fail('CSV 需要 content 或「评论内容」列');
   return rows.filter(r => r.some(v => v.trim())).map(r => Object.fromEntries(headers.map((h, i) => [h, r[i] || ''])));
 }
-export function importFeedback(input: { episodeId?: unknown; platform?: unknown; text?: unknown; format?: unknown }) {
-  if (typeof input.episodeId !== 'string' || !getEpisode(input.episodeId)) return fail('请选择已有的一期');
+export async function importFeedback(input: { episodeId?: unknown; platform?: unknown; text?: unknown; format?: unknown }) {
+  if (typeof input.episodeId !== 'string' || !(await getEpisode(input.episodeId))) return fail('请选择已有的一期');
   if (typeof input.platform !== 'string' || !isPlatformEnabled(input.platform)) return fail('请选择已开启的平台');
   if (typeof input.text !== 'string' || !input.text.trim()) return fail('请提供评论内容');
   let values: unknown[];
@@ -63,6 +67,24 @@ export function importFeedback(input: { episodeId?: unknown; platform?: unknown;
     const category = categories.find(c => c.keywords.some(k => text.toLowerCase().includes(k)))?.name || '其他';
     return { id, author, content: text, url, publishedAt, likes: Number.isFinite(likes) ? Math.max(0, Math.floor(likes)) : 0, category };
   });
+  const database = await mongoDb();
+  if (database) {
+    if (!clean.length) return { added: 0, duplicates: 0 };
+    const episodeId = input.episodeId;
+    const platform = input.platform;
+    const createdAt = new Date().toISOString();
+    const result = await database.collection<FeedbackDocument>('feedback_comments').bulkWrite(clean.map(row => ({
+      updateOne: {
+        filter: { _id: row.id },
+        update: { $setOnInsert: {
+          id: row.id, episode_id: episodeId, platform, author: row.author, content: row.content, url: row.url,
+          published_at: row.publishedAt, likes: row.likes, category: row.category, status: 'pending', created_at: createdAt,
+        } },
+        upsert: true,
+      },
+    })));
+    return { added: result.upsertedCount, duplicates: clean.length - result.upsertedCount };
+  }
   let added = 0;
   db.exec('BEGIN IMMEDIATE');
   try {
@@ -72,57 +94,144 @@ export function importFeedback(input: { episodeId?: unknown; platform?: unknown;
   } catch (error) { db.exec('ROLLBACK'); throw error; }
   return { added, duplicates: clean.length - added };
 }
-export function feedbackList(query: URLSearchParams) {
-  const platform = query.get('platform') || '', episode = query.get('episode') || '', status = query.get('status') || '', search = query.get('search') || '';
-  const rows = (db.prepare(`SELECT c.*, t.comment_id IS NOT NULL AS topic_saved
-    FROM feedback_comments c LEFT JOIN feedback_topics t ON t.comment_id = c.id
-    ORDER BY c.created_at DESC`).all() as unknown as (FeedbackRow & { topic_saved: number })[])
-    .filter(r => isPlatformEnabled(r.platform) && (!platform || r.platform === platform) && (!episode || r.episode_id === episode) && (!status || r.status === status) && (!search || `${r.author} ${r.content}`.toLowerCase().includes(search.toLowerCase())));
-  const total = rows.length, pending = rows.filter(r => r.status === 'pending').length;
-  const themes = [...categories.map(c => c.name), '其他'].map(name => ({ name, count: rows.filter(r => r.category === name).length, example: rows.find(r => r.category === name)?.content || '' })).filter(t => t.count).sort((a, b) => b.count - a.count);
-  const questions = new Map<string, { content: string; count: number; id: string }>();
-  for (const r of rows.filter(r => ['教程需求', '疑问', '问题反馈', '改进建议'].includes(r.category))) {
+export async function feedbackList(query: URLSearchParams, signal?: AbortSignal) {
+  const platform = query.get('platform') || '', episode = query.get('episode') || '', status = query.get('status') || '';
+  const search = (query.get('search') || '').toLowerCase();
+  const platforms = enabledPlatforms().filter(enabled => !platform || enabled === platform);
+  const totals = new Map<string, { name: string; count: number; example: string }>();
+  type Question = { content: string; count: number; id: string };
+  const questions = new Map<string, Question>();
+  const visible: FeedbackRow[] = [];
+  let total = 0, pending = 0;
+  const collect = (r: FeedbackRow) => {
+    if (search && !`${r.author} ${r.content}`.toLowerCase().includes(search)) return;
+    total++;
+    if (visible.length < 500) visible.push(r);
+    if (r.status === 'pending') pending++;
+    const theme = totals.get(r.category);
+    if (theme) theme.count++;
+    else totals.set(r.category, { name: r.category, count: 1, example: r.content || '' });
+    if (!['教程需求', '疑问', '问题反馈', '改进建议'].includes(r.category)) return;
     const key = normalize(r.content).replace(/[，。！？!?\s]/g, '').toLowerCase();
     const old = questions.get(key); if (old) old.count++; else questions.set(key, { content: r.content, count: 1, id: r.id });
+  };
+  if (platforms.length) {
+    const database = await mongoDb();
+    signal?.throwIfAborted();
+    if (database) {
+      const cursor = database.collection<FeedbackDocument>('feedback_comments').find<FeedbackRow>({
+        platform: { $in: platforms }, ...(episode && { episode_id: episode }), ...(status && { status: status as FeedbackStatus }),
+      }, { projection: { _id: 0 }, sort: { created_at: -1 } });
+      for await (const row of cursor) {
+        signal?.throwIfAborted();
+        collect(row);
+      }
+    } else {
+      const rows = db.prepare(`SELECT * FROM feedback_comments WHERE platform IN (${platforms.map(() => '?').join(', ')})
+        ${episode ? 'AND episode_id=?' : ''} ${status ? 'AND status=?' : ''} ORDER BY created_at DESC`)
+        .all(...platforms, ...(episode ? [episode] : []), ...(status ? [status] : [])) as unknown as FeedbackRow[];
+      rows.forEach(collect);
+    }
+  }
+  signal?.throwIfAborted();
+  const themes = [...categories.map(category => category.name), '其他'].flatMap(name => {
+    const theme = totals.get(name);
+    return theme ? [theme] : [];
+  }).sort((a, b) => b.count - a.count);
+  const commentIds = visible.map(row => row.id);
+  const episodeIds = [...new Set(visible.map(row => row.episode_id))];
+  const [savedTopics, visibleEpisodes] = await Promise.all([
+    commentIds.length ? readRows<{ _id: string }>('feedback_topics', { _id: { $in: commentIds } },
+      `SELECT comment_id AS _id FROM feedback_topics WHERE comment_id IN (${commentIds.map(() => '?').join(', ')})`,
+      commentIds, { projection: { _id: 1 } }) : [],
+    episodeIds.length ? readRows<{ id: string; name: string }>('episodes', { _id: { $in: episodeIds } },
+      `SELECT id, name FROM episodes WHERE id IN (${episodeIds.map(() => '?').join(', ')})`,
+      episodeIds, { projection: { _id: 0, id: 1, name: 1 } }) : [],
+  ]);
+  signal?.throwIfAborted();
+  const saved = new Set(savedTopics.map(topic => topic._id));
+  const episodeNames = new Map(visibleEpisodes.map(episode => [episode.id, episode.name]));
+  const topQuestions: Question[] = [];
+  for (const question of questions.values()) {
+    const rank = topQuestions.findIndex(other => other.count < question.count);
+    if (rank < 0) {
+      if (topQuestions.length < 10) topQuestions.push(question);
+      continue;
+    }
+    topQuestions.splice(rank, 0, question);
+    if (topQuestions.length > 10) topQuestions.pop();
   }
   return {
-    rows: rows.slice(0, 500).map(r => ({ ...r, topic_saved: Boolean(r.topic_saved), episodeName: getEpisode(r.episode_id)?.name || r.episode_id, platformName: NAMES[r.platform] })),
-    total, pending, themes, questions: [...questions.values()].sort((a, b) => b.count - a.count).slice(0, 10),
+    rows: visible.map(r => ({ ...r, topic_saved: saved.has(r.id), episodeName: episodeNames.get(r.episode_id) || r.episode_id, platformName: NAMES[r.platform] })),
+    total, pending, themes, questions: topQuestions,
     topics: themes.filter(t => ['教程需求', '改进建议', '问题反馈'].includes(t.name)).map(t => ({ title: t.name === '教程需求' ? '补充操作教程与资料' : t.name === '问题反馈' ? '制作常见问题排查说明' : '收集下一期功能改进选题', count: t.count, example: t.example })),
   };
 }
-export function updateFeedback(id: string, status: unknown): void {
-  if (!['pending', 'replied', 'ignored'].includes(String(status))) return fail('状态不正确');
-  const row = db.prepare('SELECT platform FROM feedback_comments WHERE id=?').get(id) as { platform: string } | undefined;
+export async function updateFeedback(id: string, value: unknown) {
+  const status = String(value);
+  if (status !== 'pending' && status !== 'replied' && status !== 'ignored') return fail('状态不正确');
+  const database = await mongoDb();
+  const comments = database?.collection<FeedbackDocument>('feedback_comments');
+  const row = comments ? await comments.findOne({ _id: id })
+    : db.prepare('SELECT platform FROM feedback_comments WHERE id=?').get(id) as { platform: string } | undefined;
   if (!row) return fail('评论不存在', 404);
   if (!isPlatformEnabled(row.platform)) return fail('该平台未开启');
-  db.prepare('UPDATE feedback_comments SET status=? WHERE id=?').run(String(status), id);
+  if (comments) await comments.updateOne({ _id: id }, { $set: { status } });
+  else db.prepare('UPDATE feedback_comments SET status=? WHERE id=?').run(status, id);
 }
 
-export function listFeedbackTopics() {
-  const rows = db.prepare(`
+export async function listFeedbackTopics() {
+  const database = await mongoDb();
+  const rows = database
+    ? (await database.collection<FeedbackTopic>('feedback_topics').aggregate<FeedbackTopicRow & { sourceEpisodeId: string }>([
+      { $sort: { created_at: -1 } },
+      { $lookup: { from: 'feedback_comments', localField: '_id', foreignField: '_id',
+        pipeline: [{ $project: { _id: 0, episode_id: 1, platform: 1, author: 1, content: 1, url: 1 } }], as: 'comment' } },
+      { $unwind: '$comment' },
+      { $lookup: { from: 'episodes', localField: 'comment.episode_id', foreignField: '_id',
+        pipeline: [{ $project: { _id: 0, name: 1 } }], as: 'sourceEpisode' } },
+      { $project: {
+        _id: 0, commentId: '$comment_id', episodeId: '$episode_id', platform: '$comment.platform', author: '$comment.author',
+        content: '$comment.content', url: '$comment.url', sourceEpisodeId: '$comment.episode_id',
+        sourceEpisodeName: { $arrayElemAt: ['$sourceEpisode.name', 0] },
+      } },
+    ]).toArray()).map(({ sourceEpisodeId, ...topic }) => ({
+      ...topic, sourceEpisodeName: topic.sourceEpisodeName || sourceEpisodeId,
+    }))
+    : db.prepare(`
     SELECT t.comment_id AS commentId, t.episode_id AS episodeId, c.platform, c.author,
            c.content, c.url, COALESCE(e.name, c.episode_id) AS sourceEpisodeName
     FROM feedback_topics t
     JOIN feedback_comments c ON c.id = t.comment_id
     LEFT JOIN episodes e ON e.id = c.episode_id
     ORDER BY t.created_at DESC
-  `).all() as { commentId: string; episodeId: string | null; platform: string; author: string; content: string; url: string; sourceEpisodeName: string }[];
+  `).all() as FeedbackTopicRow[];
   return rows.map(row => ({ ...row, platformName: NAMES[row.platform] || row.platform }));
 }
 
-export function saveFeedbackTopic(commentId: string): void {
-  const comment = db.prepare('SELECT platform FROM feedback_comments WHERE id = ?').get(commentId) as { platform: string } | undefined;
+export async function saveFeedbackTopic(commentId: string) {
+  const database = await mongoDb();
+  const comment = database ? await database.collection<FeedbackDocument>('feedback_comments').findOne({ _id: commentId })
+    : db.prepare('SELECT platform FROM feedback_comments WHERE id = ?').get(commentId) as { platform: string } | undefined;
   if (!comment) return fail('评论不存在', 404);
   if (!isPlatformEnabled(comment.platform)) return fail('该平台未开启', 422);
+  if (database) {
+    await database.collection<FeedbackTopic>('feedback_topics').updateOne({ _id: commentId }, {
+      $setOnInsert: { comment_id: commentId, episode_id: null, created_at: new Date().toISOString() },
+    }, { upsert: true });
+    return;
+  }
   db.prepare(`INSERT INTO feedback_topics (comment_id, created_at) VALUES (?, ?)
     ON CONFLICT(comment_id) DO NOTHING`).run(commentId, new Date().toISOString());
 }
 
-export function linkFeedbackTopic(commentId: string, episodeId: unknown): void {
-  if (episodeId !== null && (typeof episodeId !== 'string' || !getEpisode(episodeId))) {
+export async function linkFeedbackTopic(commentId: string, episodeId: unknown) {
+  if (episodeId !== null && (typeof episodeId !== 'string' || !(await getEpisode(episodeId)))) {
     return fail('请选择已有的一期作品', 422);
   }
-  const result = db.prepare('UPDATE feedback_topics SET episode_id = ? WHERE comment_id = ?').run(episodeId, commentId);
-  if (!result.changes) return fail('选题不存在', 404);
+  const database = await mongoDb();
+  const updated = database
+    ? (await database.collection<FeedbackTopic>('feedback_topics').updateOne({ _id: commentId }, { $set: { episode_id: episodeId } })).matchedCount
+    : db.prepare('UPDATE feedback_topics SET episode_id = ? WHERE comment_id = ?').run(episodeId, commentId).changes;
+  if (!updated) return fail('选题不存在', 404);
 }

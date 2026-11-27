@@ -9,7 +9,7 @@ import logos from '@/lib/logos.json'
 import { cover, episodeHref, fmt, names, safeUrl, when } from '@/lib/format'
 import { cn } from '@/lib/utils'
 import type { Action, Episode, Platform, Task } from '@/types'
-import { useApp } from '@/context'
+import { useWorkspace } from '@/context'
 
 export function Panel({ title, note, children, className }: { title?: string; note?: string; children: ReactNode; className?: string }) {
   return <Card className={cn('min-w-0 rounded-2xl', className)}>{title && <CardHeader><CardTitle>{title}</CardTitle>{note && <CardDescription>{note}</CardDescription>}</CardHeader>}<CardContent className={title ? '' : 'pt-6'}>{children}</CardContent></Card>
@@ -30,13 +30,13 @@ export function PlatformIcon({ platform, siteLogo }: { platform: Platform; siteL
   return <span className="inline-flex size-6 shrink-0 items-center justify-center overflow-hidden rounded-md align-middle" style={{ background: l.bg }}>{platform === 'zsz' && siteLogo ? <img className="size-full object-cover" src="/site-logo" alt="" /> : <svg aria-hidden="true" viewBox={l.viewBox ?? '0 0 24 24'} className="size-4"><path d={l.d || l.stroke} fill={l.stroke ? 'none' : 'white'} stroke={l.stroke ? 'white' : undefined} strokeWidth={2} strokeLinejoin="round" /></svg>}</span>
 }
 export function PlatformLabel({ platform, name }: { platform: Platform; name?: string }) { return <span className="inline-flex items-center gap-2"><PlatformIcon platform={platform} />{name || names[platform]}</span> }
-export function Status({ task }: { task: Task }) {
+export function Status({ task }: { task: Pick<Task, 'state' | 'stateCn'> }) {
   const good = task.state === 'published', bad = ['failed', 'not_logged_in'].includes(task.state)
   return <Badge data-tone={bad?'negative':good?'positive':['filled','awaiting_user'].includes(task.state)?'warning':'neutral'} variant={bad ? 'destructive' : good ? 'default' : 'secondary'} className={cn(good && 'bg-emerald-50 text-emerald-700', ['filled', 'awaiting_user'].includes(task.state) && 'bg-amber-50 text-amber-700')}>{task.stateCn}</Badge>
 }
 export function ActionButton({ action, children, primary, confirm }: { action: Action; children: ReactNode; primary?: boolean; confirm?: string }) {
-  const { busy, run, overview } = useApp()
-  const disabled = busy || !overview.enabledPlatforms.length
+  const { busy, run, status } = useWorkspace()
+  const disabled = busy || !status?.enabledPlatforms.length
   return confirm ? <ConfirmButton variant={primary ? 'default' : 'outline'} size="sm" disabled={disabled} title="确认执行此操作？" description={confirm} onConfirm={() => void run(action)}>{children}</ConfirmButton> : <Button variant={primary ? 'default' : 'outline'} size="sm" disabled={disabled} onClick={() => void run(action)}>{children}</Button>
 }
 export function DataTable({ headers, rows }: { headers: string[]; rows: { key: string; cells: ReactNode[] }[] }) {
@@ -49,8 +49,12 @@ export function DataTable({ headers, rows }: { headers: string[]; rows: { key: s
     </TableRow>)}</TableBody>
   </Table> : <Empty />
 }
-export function EpisodeLink({ episode: e }: { episode: Episode }) {
-  return <a className="inline-flex items-center gap-3 hover:text-primary" href={episodeHref(e)} title={e.name}>{cover(e) && <img className="h-10 w-14 rounded-md object-cover" src={cover(e)} alt="" />}<span><b className="block font-medium">{e.nick}</b><small className="text-muted-foreground">第 {e.episode} 期 · {when(e.schedule || e.createdAt)}</small></span></a>
+export function EpisodeLink({ episode: e }: { episode: Pick<Episode, 'id' | 'name' | 'nick' | 'episode' | 'schedule' | 'createdAt' | 'covers'> }) {
+  const image = cover(e, '4x3', 168)
+  return <a className="inline-flex items-center gap-3 hover:text-primary" href={episodeHref(e)} title={e.name}>
+    {image && <img className="h-10 w-14 rounded-md object-cover" src={image} alt="" width={56} height={40} loading="lazy" decoding="async" />}
+    <span><b className="block font-medium">{e.nick}</b><small className="text-muted-foreground">第 {e.episode} 期 · {when(e.schedule || e.createdAt)}</small></span>
+  </a>
 }
 export function ExternalLink({ url, children = '打开 ↗' }: { url?: string; children?: ReactNode }) { const href = safeUrl(url); return href ? <a className="text-primary hover:underline" href={href} target="_blank" rel="noopener noreferrer">{children}</a> : <span className="text-muted-foreground">–</span> }
 export function MetricValue({ value }: { value: number | null | undefined }) { return <span className="tabular-nums">{fmt(value)}</span> }

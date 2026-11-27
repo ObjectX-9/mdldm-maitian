@@ -5,6 +5,7 @@ type MarkdownContext = {
   file: string
   files: ReadonlySet<string>
   openFile: (file: string) => void
+  coverPath?: string
   anchorPrefix: string
 }
 
@@ -44,8 +45,9 @@ function inline(source: string, context: MarkdownContext, depth = 0): ReactNode[
       if (!image && target.startsWith('#')) {
         parts.push(<button key={i} type="button" className="skill-inline-link" onClick={() => document.getElementById(context.anchorPrefix + anchor(target.slice(1)))?.scrollIntoView({ block: 'start' })}>{label}</button>)
       } else if (relative && context.files.has(relative)) {
+        const cover = image && relative === context.coverPath
         parts.push(image
-          ? <img key={i} src={skillImageUrl(context.skillId, relative)} alt={label} loading="lazy" />
+          ? <img key={i} className={cover ? 'skill-cover' : undefined} src={skillImageUrl(context.skillId, relative)} alt={label} loading={cover ? 'eager' : 'lazy'} />
           : <button key={i} type="button" className="skill-inline-link" onClick={() => context.openFile(relative)}>{label}</button>)
       } else if (/^https?:\/\//i.test(target)) {
         parts.push(<a key={i} href={target} target="_blank" rel="noopener noreferrer">{label}</a>)

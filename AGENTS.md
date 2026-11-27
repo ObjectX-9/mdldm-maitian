@@ -52,6 +52,7 @@
 
 - 新增前端和 Express 服务端代码使用 TypeScript；不为迁移语言而批量改写现有 `.mjs`。
 - 修改 JS 模块的导出契约时，同步更新对应类型声明。
+- `skills/` 和 `.agents/skills/` 下的每项技能须包含 `SKILL.md`、`README.md` 和 `assets/cover.jpg`。在 `README.md` 开头用相对路径插入封面，并说明技能用途、适用场景和交付内容。其他图片也放在技能目录内，通过 Markdown 相对路径引用。
 - 复用 shadcn/ui 和现有业务组件；不引入另一套组件库或请求库。
 - 开发入口使用 Vite 中间件；生产页面由 Express 提供 `dist/` 构建产物。
 - 保留现有口令、飞书会话及 Cloudflare Access 鉴权，不让新增接口绕过访问控制。

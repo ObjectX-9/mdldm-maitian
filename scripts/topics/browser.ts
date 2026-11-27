@@ -3,6 +3,7 @@ import path from 'node:path';
 import readline from 'node:readline';
 import { ensure, withTab, evaluate, click, screenshot, close, sleep } from '../../src/driver.mjs';
 import { acquireBrowser, releaseBrowser } from '../../src/browser-lock.ts';
+import { closeMongo } from '../../src/mongodb.ts';
 import { isPlatformEnabled } from '../../src/platforms.ts';
 import { dataDir } from '../../src/topics/store.ts';
 import { reserveDetail, blockPlatform } from './risk-budget.mjs';
@@ -12,11 +13,11 @@ function target(value:string) {
   const url=new URL(value);
   const platform:Platform=url.hostname==='www.douyin.com'||url.hostname==='douyin.com'?'douyin':'xiaohongshu';
   if(url.protocol!=='https:'||!['www.douyin.com','douyin.com','www.xiaohongshu.com','xiaohongshu.com'].includes(url.hostname))throw new Error('只允许访问抖音、小红书 HTTPS 页面');
-  if(!isPlatformEnabled(platform==='xiaohongshu'?'xhs':platform))throw new Error(`请先在麦田系统中开启 ${platform}`);
+  if(!isPlatformEnabled(platform==='xiaohongshu'?'xhs':platform))throw new Error(`请先在肥特自媒体工作室中开启 ${platform}`);
   return {url,platform,detail:/\/(video|explore|search_result)\/[^/]+/.test(url.pathname)};
 }
 const initial=process.argv[2];if(!initial)throw new Error('用法：pnpm collect:browser <平台 HTTPS URL>，随后逐行输入 JSON 操作');
-const browserToken=acquireBrowser();if(!browserToken)throw new Error('麦田浏览器正在执行其他任务，请稍后重试');
+const browserToken=await acquireBrowser();if(!browserToken)throw new Error('肥特自媒体工作室的浏览器正在执行其他任务，请稍后重试');
 let platform:Platform='douyin';
 async function allow(value:string) {
   const next=target(value);platform=next.platform;
@@ -66,4 +67,4 @@ try {
       }catch(error) {console.log(JSON.stringify({ok:false,error:error instanceof Error?error.message:String(error)}));break;}
     }
   });
-}finally {lines.close();try {await close();}finally {releaseBrowser(browserToken);}}
+}finally {lines.close();try {await close();}finally {await releaseBrowser(browserToken); await closeMongo();}}

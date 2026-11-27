@@ -2,7 +2,7 @@
 import { tsImport } from 'tsx/esm/api';
 import { evaluate, withTab, sleep } from './driver.mjs';
 import { num } from './metrics.mjs';
-import { db } from './db.mjs';
+import { db, mongoDb, documentKey } from './db.mjs';
 import { config } from './feishu.mjs';
 import { SITE } from './site.mjs';
 
@@ -70,21 +70,48 @@ const up = db.prepare(`INSERT INTO followers (day, platform, total, gain, loss, 
 const has = db.prepare(`SELECT source FROM followers WHERE day=? AND platform=?`);
 
 // 存今天的实测值；历史只补还没有实测值的日子
-export function saveFollowers(platform, r) {
+export async function saveFollowers(platform, r) {
   const now = new Date().toISOString(), t = today();
-  up.run(t, platform, r.total, null, null, 'live', now);
+  const database = await mongoDb();
+  const followers = database?.collection('followers');
+  async function save(day, total, gain, loss, source) {
+    if (!followers) {
+      if (source === 'backfill' && has.get(day, platform)?.source === 'live') return false;
+      up.run(day, platform, total, gain, loss, source, now);
+      return true;
+    }
+    const id = documentKey(day, platform);
+    const fields = { day, platform, total, source, collected_at: now };
+    const defaults = {};
+    if (gain != null) fields.gain = gain; else defaults.gain = null;
+    if (loss != null) fields.loss = loss; else defaults.loss = null;
+    const update = { $set: fields, $setOnInsert: defaults };
+    if (source === 'live') {
+      await followers.updateOne({ _id: id }, update, { upsert: true });
+      return true;
+    }
+    const filter = { _id: id, source: { $ne: 'live' } };
+    try {
+      await followers.updateOne(filter, update, { upsert: true });
+      return true;
+    } catch (error) {
+      if (error.code !== 11000) throw error;
+      return (await followers.updateOne(filter, update)).matchedCount > 0;
+    }
+  }
+  await save(t, r.total, null, null, 'live');
   let hist = (r.history || []).filter(h => h.day < t).sort((a, b) => a.day < b.day ? 1 : -1), n = 0;
   if (hist.length && hist[0].total == null) {   // 只有每日净增：从今天的总数往回推每天结束时的总数（今天的净增取平台给的当日数，没有就按 0 算）
     let run = r.total - (r.todayNet || 0); for (const h of hist) { h.total = run; run -= h.net || 0; }
   }
-  for (const h of hist) { if (h.total == null || (has.get(h.day, platform) || {}).source === 'live') continue; up.run(h.day, platform, h.total, h.gain ?? (h.net > 0 ? h.net : null), h.loss ?? null, 'backfill', now); n++; }
+  for (const h of hist) if (h.total != null && await save(h.day, h.total, h.gain ?? (h.net > 0 ? h.net : null), h.loss ?? null, 'backfill')) n++;
   return n;
 }
 export async function collectFollowers(only, skip = []) {
   const out = {};
   for (const [p, fn] of Object.entries(followerCollectors)) {
     if (!isPlatformEnabled(p) || (only && !only.includes(p)) || skip.includes(p)) continue;
-    try { const r = await fn(); if (!r) { out[p] = '没读到'; continue; } const n = saveFollowers(p, r); out[p] = { total: r.total, backfilled: n }; }
+    try { const r = await fn(); if (!r) { out[p] = '没读到'; continue; } const n = await saveFollowers(p, r); out[p] = { total: r.total, backfilled: n }; }
     catch (e) { out[p] = '出错：' + e.message.slice(0, 80); }
   }
   return out;

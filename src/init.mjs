@@ -20,14 +20,14 @@ const yes = async (q, def = true) => { def = def && !!process.stdin.isTTY; const
 const ok = (t) => console.log(`  ✅ ${t}`), bad = (t) => console.log(`  ❌ ${t}`), tip = (t) => console.log(`  ·  ${t}`);
 const home = (p) => p.replace(/^~(?=\/|$)/, os.homedir());
 
-console.log('\n麦田 · 安装向导\n');
+console.log('\n肥特自媒体工作室 · 安装向导\n');
 console.log('一、检查环境');
 const [maj, min] = process.versions.node.split('.').map(Number);
 if (maj > 22 || (maj === 22 && min >= 5)) ok(`Node.js ${process.versions.node}`); else { bad(`Node.js ${process.versions.node}，需要 22.5 以上（用到内置 node:sqlite）`); process.exit(1); }
 if (process.platform !== 'darwin') tip('目前只在 macOS 上实测过；其他系统需要自己改开机自启和 NAS 挂载部分');
 const chrome = ['/Applications/Google Chrome.app', path.join(os.homedir(), 'Applications/Google Chrome.app')].find(fs.existsSync);
 chrome ? ok('Google Chrome') : bad('没找到 Google Chrome，请先安装');
-let cf = false; try { execFileSync('which', ['cloudflared'], { stdio: 'pipe' }); cf = true; ok('cloudflared（可选，远程访问用）'); } catch { tip('没装 cloudflared：想在手机上远程看麦田，之后 brew install cloudflared'); }
+let cf = false; try { execFileSync('which', ['cloudflared'], { stdio: 'pipe' }); cf = true; ok('cloudflared（可选，远程访问用）'); } catch { tip('没装 cloudflared：想在手机上远程访问肥特自媒体工作室，之后 brew install cloudflared'); }
 
 if (fs.existsSync(CFG) && !(await yes('\n已经有 config.json，要重新生成吗？（旧的会备份成 config.json.bak）', false))) {
   console.log('\n保留现有配置。'); rl.close(); process.exit(0);
@@ -48,7 +48,7 @@ const hook = await ask('4. 飞书群机器人的 Webhook 地址（通知卡片�
 if (hook) cfg.feishuWebhook = hook; else delete cfg.feishuWebhook;
 const xh = await ask('5. 你的 X 用户名（不带 @，用来采粉丝；不用就回车）');
 if (xh) cfg.xHandle = xh.replace(/^@/, ''); else delete cfg.xHandle;
-cfg.web = { port: +(await ask('6. 麦田网页用哪个端口？', '8787')), key: crypto.randomBytes(12).toString('base64url') };
+cfg.web = { port: +(await ask('6. 肥特自媒体工作室网页用哪个端口？', '8787')), key: crypto.randomBytes(12).toString('base64url') };
 if (await yes('7. 有自己的网站（课程站/会员站）要看转化吗？', false)) {
   cfg.site = { name: await ask('   站点叫什么？', '知识站'), base: await ask('   站点地址', 'https://example.com'), adminPath: await ask('   管理后台路径', '/admin'),
     coursesApi: await ask('   课程列表接口', '/api/courses?admin=1'), dashboardApi: await ask('   数据汇总接口', '/api/admin/dashboard'), coursePath: '/series/{seriesId}?courseId={id}' };

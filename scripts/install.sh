@@ -7,7 +7,7 @@ set -e
 DIR=${MAITIAN_HOME:-$HOME/maitian}
 say() { echo; echo "== $1"; }
 
-say "麦田 · 一行安装（装到 $DIR）"
+say "肥特自媒体工作室 · 一行安装（装到 $DIR）"
 command -v git >/dev/null || { echo "需要 git：先装 Xcode 命令行工具（xcode-select --install）"; exit 1; }
 if ! command -v node >/dev/null; then echo "需要 Node.js 22.5 以上：brew install node，或去 https://nodejs.org 下载"; exit 1; fi
 node -e 'const [a,b]=process.versions.node.split(".").map(Number);process.exit(a>22||(a===22&&b>=5)?0:1)' || { echo "Node.js 版本是 $(node -v)，需要 22.5 以上"; exit 1; }

@@ -7,11 +7,19 @@ import { NAMES } from './db.mjs';
 
 const configPath = process.env.MAITIAN_CONFIG || path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'config.json');
 let selected = config.enabledPlatforms;
+let configVersion: string | undefined;
 export function availablePlatforms(): string[] {
   return Object.keys(NAMES).filter(p => p !== 'zsz' || config.site?.base);
 }
 export function enabledPlatforms(): string[] {
-  try { selected = JSON.parse(fs.readFileSync(configPath, 'utf8')).enabledPlatforms; } catch { /* 保留上一次配置 */ }
+  try {
+    const stat = fs.statSync(configPath, { bigint: true });
+    const version = `${stat.dev}:${stat.ino}:${stat.size}:${stat.mtimeNs}:${stat.ctimeNs}`;
+    if (version !== configVersion) {
+      selected = JSON.parse(fs.readFileSync(configPath, 'utf8')).enabledPlatforms;
+      configVersion = version;
+    }
+  } catch { /* 保留上一次配置 */ }
   const available = availablePlatforms();
   const configured = selected;
   return Array.isArray(configured) ? available.filter(p => configured.includes(p)) : available.filter(p => p !== 'wechat');

@@ -1,10 +1,11 @@
 import { useId, useState } from 'react'
-import { Activity, Archive, BarChart3, Bookmark, BookOpen, CalendarDays, ChartNoAxesCombined, ChevronDown, ClipboardList, Clock3, Flame, LayoutDashboard, Lightbulb, ListChecks, Menu, MessageCircle, Server, Settings2, Smartphone } from 'lucide-react'
+import { Activity, Archive, BarChart3, Bookmark, BookOpen, CalendarDays, ChartNoAxesCombined, ChevronDown, ClipboardList, Clock3, Flame, Images, LayoutDashboard, Lightbulb, ListChecks, Menu, MessageCircle, Server, Settings2, Smartphone } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Dialog, DialogClose, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog'
 import { cn } from '@/lib/utils'
 export const workspaceGroups = [
   {label:'内容运营',items:[{id:'board',label:'运营总览',icon:LayoutDashboard},{id:'traffic',label:'流量',icon:BarChart3},{id:'calendar',label:'日历',icon:CalendarDays},{id:'convert',label:'转化',icon:ChartNoAxesCombined},{id:'archive',label:'档案',icon:Archive}]},
+  {label:'内容管理',items:[{id:'creations',label:'作品库',icon:Images}]},
   {label:'研究分析',items:[{id:'topics/overview',label:'研究总览',icon:LayoutDashboard},{id:'topics/library',label:'热点内容库',icon:Flame},{id:'topics/needs',label:'需求洞察',icon:Lightbulb},{id:'topics/workbench',label:'选题工作台',icon:Bookmark},{id:'topics/apps',label:'App 调研',icon:Smartphone}]},
   {label:'技能',items:[{id:'skills',label:'技能管理',icon:BookOpen}]},
   {label:'数据与管理',items:[{id:'topics/runs',label:'采集记录',icon:ListChecks},{id:'topics/timeline',label:'采集时间轴',icon:Clock3},{id:'tasks',label:'任务',icon:ClipboardList},{id:'feedback',label:'评论',icon:MessageCircle},{id:'runtime',label:'运行',icon:Activity},{id:'services',label:'服务监控',icon:Server},{id:'topics/settings',label:'采集设置',icon:Settings2},{id:'system',label:'系统',icon:Settings2}]},
